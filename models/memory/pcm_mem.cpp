@@ -42,6 +42,11 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     this->pcm_write_latency=this->get_js_config()->get("pcm_write_latency")->get_int();
 
     this->pcm_size = this->cells_per_weight*this->tile_size*this->array_size*this->n_sectors*this->matrix_length;
+    this->mvm_full_result = new int64_t[this->matrix_length];
+
+    //number of bytes for each Yi value in the output vector (tells how many bytes are needed to store the output value using all it's aviable bits)
+    this->response_byte_size = this->output_size%(sizeof(uint8_t))+1;
+    this->response_byte_size+=((this->output_size - this->response_byte_size)/(sizeof(uint8_t)*8));
 
     //number of Xi adresses in bit is equal to the number of Xi values deided by the width of the input bus
     this->Xi_adresses = matrix_length/input_width_log2;
@@ -93,8 +98,6 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
         }
     }
 }
-
-
 
 vp::IoReqStatus Pcm::req_PCM(vp::Block *__this, vp::IoReq *req){
     Pcm *_this = (Pcm *)__this;
@@ -148,7 +151,7 @@ vp::IoReqStatus Pcm::handle_Xi_write(vp::IoReq *req){
 
     req->inc_latency((uint64_t) (this->clock.get_engine()->get_period()/this->aimc_bus_freq) );
     //write the Xi value into the input register
-    memcpy((void*)this->input_registers[addr], (void *)data, size);//this is not as easy if the size of Xi is not byte aligned
+    memcpy((void*)this->input_registers[addr], (void *)data, size);//this is not as easy if the size of Xi is aligned
     return vp::IO_REQ_OK;
 }
 
@@ -159,6 +162,10 @@ vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
         this->pending_req = req;
         
         //TODO: implement MVM & ADC
+
+        int ** sectors = this->enabled_sectors(this->configuration_registers);
+        //this->mvm_multithreaded(this->pcm_cells, TODO: how to use vectors, sectors, this->mvm_full_result);
+        
 
         return vp::IO_REQ_PENDING;
 
@@ -174,11 +181,96 @@ void Pcm::aimc_computation(vp::Block* __this, vp::ClockEvent *event){
     _this->pending_req->get_resp_port()->resp(_this->pending_req);
 }
 
+void Pcm::compute_flat_mvm_tile(int8_t *matrix, int8_t * vector, int64_t * result, int *sector, int tile, int i,int inc){
+    for(int j=i;j<i+inc;j++){
+        for(int k=0;k<this->matrix_length;k++){
+            int64_t weight=1;
+            int y=0;
+            while(sector[y]>0){
+                for(int x=0;x<this->cells_per_weight;x++){
+                    int index = (((sector[y]*this->array_size)+i)*this->tile_size+j)*this->matrix_length+k*this->matrix_length+x;
+                    weight*= matrix[index];
+                    //it's not actualy a multiplication but a bit shift (TODO)
+                }
+                y++;
+                result[tile*tile_size+j] += weight * vector[k];
+            }
+        }
+    }
+}
+  
+void Pcm::mvm_multithreaded(int8_t* matrix, int8_t * vector, int **sector,int64_t * result){
+    
+    //result vector initialization
+    memset(result,0,sizeof(int64_t)*this->matrix_length);
+  
+    //threads vector
+    std::vector<std::thread> threads;
+    //loops, each thread will compute a part of a tile of the matrix
+    for(int i=0;i<this->array_size;i++){
+        for(int j=0;j<2;j++){
+            std::thread t(compute_flat_mvm_tile, matrix, vector, result, sector[i], i,j*64, 64);
+            threads.push_back(move(t));
+        }
+    }
+  
+    //thread join, not necesary but highly raccomended for extensive mvm use
+    for(int i=0;i<threads.size();i++){
+        threads[i].join();
+    }
+  
+}
 
+uint8_t * Pcm::adc(int64_t input,bool unsigned_conversion) {
+    
+    //output buffer allocation
+    uint8_t *output = new uint8_t[this->response_byte_size];
+
+    if(output==nullptr){
+        this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: ADC value allocation failed\n");
+        throw std::bad_alloc();
+    }
+    //output buffer initialization, loads the less significant byte first at the end of the array
+    for (int i = 0; i < this->response_byte_size; ++i) {
+        output[this->response_byte_size-i-1] = input >> (i * 8) & 0xFF;
+    }  
+
+    //clipping
+    uint8_t mask=0xFF;
+    int u_conversion = unsigned_conversion ? 1 : 0; 
+    mask>>=(8-(this->output_size)+u_conversion)%8;
+
+    //masking most significant byte
+    output[0] &= mask;
+
+    /* DEBUG, uncomment to see the output
+    std::cout<<std::bitset<64>(input)<<std::endl;
+    for (size_t i = 0; i < size; ++i) {
+        std::cout<<std::bitset<8>(output[i])<<std::endl;
+    }*/
+
+    return output;
+}
+
+int ** Pcm::enabled_sectors(uint32_t *configuration_registers){
+    int ** sectors = new int*[this->n_sectors];
+    for(int i=0;i<this->n_sectors;i++){
+        sectors[i] = new int[this->tile_size +1];
+        int j=0;
+        int k=0;
+        do{
+            //TODO: condition to configure the sectors 
+            k++;
+        }while (k!= 0);
+    }
+    return sectors;
+}
 
 void Pcm::free_component(){
     delete[] this->input_registers;
     delete[] this->pcm_cells;
+    delete[] this->mvm_full_result;
+    delete[] this->aimc_response;
 }
 
 void Pcm::power_ctrl_sync(vp::Block *__this, bool value)
