@@ -24,6 +24,7 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
 
     this->Xi_size = this->get_js_config()->get("Xi_size")->get_int();
     this->cell_size=this->get_js_config()->get("cell_size")->get_int();
+    this->mask= (1 << cell_size) - 1;
     this->output_size=this->get_js_config()->get("output_size")->get_int();
     this->cells_per_weight=this->get_js_config()->get("cells_per_weight")->get_int();
     
@@ -52,6 +53,7 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     this->Xi_adresses = matrix_length/input_width_log2;
     //number of pcm cells adresses in bit is equal to the number of cells devided by the width of the pcm bus
     this->pcm_cells_adresses = (matrix_length*matrix_length)/pcm_width_log2;
+
 
     trace.msg("Builing PCM input vector (Size: 0x%x)\n",this->matrix_length);
     //input value array allocation, 
@@ -161,10 +163,10 @@ vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
         this->trace.msg("AIMC computation enqued\n");
         this->pending_req = req;
         
-        //TODO: implement MVM & ADC
 
         int ** sectors = this->enabled_sectors(this->configuration_registers);
         //this->mvm_multithreaded(this->pcm_cells, TODO: how to use vectors, sectors, this->mvm_full_result);
+        this->convert_to_adc(this->mvm_full_result, this->aimc_response);
         
 
         return vp::IO_REQ_PENDING;
@@ -181,23 +183,38 @@ void Pcm::aimc_computation(vp::Block* __this, vp::ClockEvent *event){
     _this->pending_req->get_resp_port()->resp(_this->pending_req);
 }
 
+
 void Pcm::compute_flat_mvm_tile(int8_t *matrix, int8_t * vector, int64_t * result, int *sector, int tile, int i,int inc){
     for(int j=i;j<i+inc;j++){
         for(int k=0;k<this->matrix_length;k++){
-            int64_t weight=1;
-            int y=0;
-            while(sector[y]>0){
+            //create an all-zero int64_t
+            int64_t weight=static_cast<int64_t>(0);
+            uint8_t y=0;
+            //create an indexing for the bit shift
+            int bit_index=this->max_shift;
+            
+            while(sector[y]>=0){
                 for(int x=0;x<this->cells_per_weight;x++){
-                    int index = (((sector[y]*this->array_size)+i)*this->tile_size+j)*this->matrix_length+k*this->matrix_length+x;
-                    weight*= matrix[index];
-                    //it's not actualy a multiplication but a bit shift (TODO)
+                    //generate the index of the flat 5D array
+                    uint64_t index = (((sector[y]*this->array_size)+i)*this->tile_size+j)*this->matrix_length+k*this->matrix_length+x;
+                    //the mask is used to select the bits of the cell, then it's shifted to the right position
+                    weight |= ((matrix[index]&this->mask)<<bit_index);
+                    //the bit index is decremented by the size of the cell
+                    bit_index-=this->cell_size;   
                 }
                 y++;
-                result[tile*tile_size+j] += weight * vector[k];
             }
+            //check if the weight is negative
+            if((weight&this->negative)!=0){
+                //if the weight is negative make the 2's complement of it
+                weight = static_cast<int64_t>(static_cast<uint64_t>(weight) | negative_mask);
+            }
+            //write the result into the result vector
+            result[tile*this->tile_size+j] += weight * vector[k];
         }
     }
 }
+
   
 void Pcm::mvm_multithreaded(int8_t* matrix, int8_t * vector, int **sector,int64_t * result){
     
@@ -221,15 +238,16 @@ void Pcm::mvm_multithreaded(int8_t* matrix, int8_t * vector, int **sector,int64_
   
 }
 
-uint8_t * Pcm::adc(int64_t input,bool unsigned_conversion) {
-    
-    //output buffer allocation
-    uint8_t *output = new uint8_t[this->response_byte_size];
-
-    if(output==nullptr){
-        this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: ADC value allocation failed\n");
-        throw std::bad_alloc();
+void Pcm::convert_to_adc(int64_t *input, uint8_t *output){
+    //convert the input vector to the output vector
+    for(int i=0;i<this->matrix_length;i++){
+        this->adc(input[i],&output[i*this->response_byte_size]);
     }
+}
+
+void Pcm::adc(int64_t input,uint8_t * output) {
+      
+
     //output buffer initialization, loads the less significant byte first at the end of the array
     for (int i = 0; i < this->response_byte_size; ++i) {
         output[this->response_byte_size-i-1] = input >> (i * 8) & 0xFF;
@@ -237,25 +255,18 @@ uint8_t * Pcm::adc(int64_t input,bool unsigned_conversion) {
 
     //clipping
     uint8_t mask=0xFF;
-    int u_conversion = unsigned_conversion ? 1 : 0; 
+    int u_conversion = this->signed_conversion ? 0 : 1; 
     mask>>=(8-(this->output_size)+u_conversion)%8;
 
     //masking most significant byte
     output[0] &= mask;
 
-    /* DEBUG, uncomment to see the output
-    std::cout<<std::bitset<64>(input)<<std::endl;
-    for (size_t i = 0; i < size; ++i) {
-        std::cout<<std::bitset<8>(output[i])<<std::endl;
-    }*/
-
-    return output;
 }
 
 int ** Pcm::enabled_sectors(uint32_t *configuration_registers){
-    int ** sectors = new int*[this->n_sectors];
+    int ** sectors = new int*[this->array_size];
     for(int i=0;i<this->n_sectors;i++){
-        sectors[i] = new int[this->tile_size +1];
+        sectors[i] = new int[this->n_sectors+1];
         int j=0;
         int k=0;
         do{
@@ -263,6 +274,17 @@ int ** Pcm::enabled_sectors(uint32_t *configuration_registers){
             k++;
         }while (k!= 0);
     }
+
+    this->used_sectors = 0;
+    int i=0;
+    while(sectors[0][i]>=0){
+      this->used_sectors++;
+      i++;
+    }
+    this->signed_conversion = true;
+    this->negative_mask =(~0ULL << (this->cell_size*used_sectors*this->cells_per_weight));
+    this->negative = 1 << ((this->cell_size*used_sectors*this->cells_per_weight)-1); 
+    this->max_shift=(used_sectors*this->cells_per_weight*cell_size )-cell_size;
     return sectors;
 }
 

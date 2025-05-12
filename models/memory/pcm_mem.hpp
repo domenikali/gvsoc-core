@@ -106,6 +106,20 @@ class Pcm : public vp::Component
         //  - pending request for asynchronous response
         vp::IoReq *pending_req;
 
+        //AIMC helper parameters
+        //  - number of sectors active during the AIMC operation
+        int used_sectors;
+        //  - mask to check negative number
+        uint64_t negative_mask;
+        //  - mask to 2's complement the negative number
+        uint64_t negative;
+        //  - number of shift to apply to each cell to make the weight 
+        int max_shift;
+        //  - mask to get the used bits of the cell
+        uint8_t mask;
+        //  - true if the computation required singed multiplication or not
+        bool signed_conversion;
+
 
 
         //TODO: figure out how to map the PCM cells in a smart way (map? flat out? O(1) space c. would be better but I'm not sure if possible)
@@ -122,10 +136,11 @@ class Pcm : public vp::Component
          * @note the output array is allocated in the heap and must be freed by the caller
          */
         int ** enabled_sectors(uint32_t *configuration_registers);
-
+        
         /**
          * @brief MVM tile portion computation
          * This method compute a portion of the MVM operation, it is called by the main MVM method and run on a separete thread
+         * The weight is calculated using bitwise operations to load only the useful bits of the PCM cells
          * @param matrix pointer to the PCM cells
          * @param vector pointer to the input vector
          * @param result pointer to the output vector
@@ -147,6 +162,14 @@ class Pcm : public vp::Component
         void mvm_multithreaded(int8_t* matrix, int8_t * vector, int **sector,int64_t * result);
 
         /**
+         * @brief Convert the MVM full sized result to bite array
+         * This method convert the MVM full int 64 bits result to a unsigned byte array, it is used to convert the output value of the MVM operation into a byte array ready to be returned via IoReq
+         * @param mvm_full_result pointer to the MVM result
+         * @param aimc_response pointer to the AIMC response
+         */
+        void convert_to_adc(int64_t * mvm_full_result, uint8_t * aimc_response);
+
+        /**
          * @brief ADC method
          * This method convert the input value into a byte array cutting bit's over the max voltage, it is used to convert the output value of the MVM operation into a byte array ready to be returned via IoReq
          * @param input input value to be converted
@@ -155,6 +178,6 @@ class Pcm : public vp::Component
          * @note the output array is allocated in the heap and must be freed by the caller
          * @note the output array is not aligned to 8 bits, the first byte is the most significant
          */
-        uint8_t * Pcm::adc(int64_t input,bool unsigned_conversion);
+        void adc(int64_t input,uint8_t * output);
 
 };
