@@ -6,6 +6,50 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef PCM_SIZE_8
+    typedef uint8_t pcm_size_t;
+#elif defined(PCM_SIZE_16)
+    typedef uint16_t pcm_size_t ;
+#elif defined(PCM_SIZE_32)
+    typedef uint32_t pcm_size_t ;
+#else 
+    typedef uint64_t pcm_size_t;
+#endif
+
+#ifdef INPUT_SIZE_8
+    typedef uint8_t input_size_t;
+#elif defined(INPUT_SIZE_16)
+    typedef uint16_t input_size_t;
+#elif defined(INPUT_SIZE_32)
+    typedef uint32_t input_size_t;
+#else 
+    typedef uint64_t input_size_t;
+#endif
+
+enum class CMD : uint32_t{
+    CMD_COMPUTE = 0x00000000,
+    CMD_PARAM = 0x10000000,
+    CMD_ABORT = 0x40000000
+};
+
+enum class CMD_SETTINGS : uint32_t{
+    CMD_SETTINGS_SECTORS = 0x10000000,
+    CMD_SETTINGS_TWO_STEP_U = 0x10000001,
+    CMD_SETTINGS_TWO_STEP_U_DOUBLE_WEIGHT = 0x10000002,
+    CMD_SETTINGS_T_STEP_S = 0x10000003,
+    CMD_SETTINGS_TWO_STEP_S_DOUBLE_WEIGHT = 0x10000004,
+    CMD_SETTINGS_SINGLE_STEP = 0x10000005,
+    CMD_SETTINGS_FAST_SINGLE_STEP = 0x10000006,
+    CMD_SETTINGS_INPUT_PRECISION = 0x10000007,
+    CMD_SETTINGS_BL = 0x10000008
+};
+
+struct pcm_write_count{
+    uint64_t reset_count;
+    uint64_t write_count;
+};
+typedef struct pcm_write_count pcm_write_count_t;
+
 /**
  * @brief PCM module with AIMC capabilities
  * This class models the behaviour of a PCM module with AIMC capabilities, this module is composed of multiple PCM tiles divided into arrays.
@@ -63,6 +107,16 @@ class Pcm : public vp::Component
 
         vp::Trace trace;
 
+        //statistic parameters
+        //  - number of read operations to the PCM module
+        uint64_t pcm_read_count;
+        //  - number of write operations to the PCM module
+        //    - number of cell resets
+        //    - number of cell writes 
+        pcm_write_count_t pcm_write_count;
+        //  - number of AIMC computations
+        uint64_t aimc_compute_count;
+
         //architectural parameters
         int Xi_size;
         int cell_size;
@@ -94,7 +148,7 @@ class Pcm : public vp::Component
         uint32_t *configuration_registers;
         
         //weigth matrix, it's allocatated as a flat array but it's accesed as a 5D matrix
-        int8_t * pcm_cells; 
+        pcm_size_t * pcm_cells; 
 
         //AIMC responses helper:
         //  - number of bytes for each Yi output value
@@ -136,6 +190,18 @@ class Pcm : public vp::Component
          * @note the output array is allocated in the heap and must be freed by the caller
          */
         int ** enabled_sectors(uint32_t *configuration_registers);
+
+        /**
+         * @breif flat 5D array index computation
+         * This method computes the index of the flat 5D array using the given parameters
+         * @param sect sector number
+         * @param i tile number
+         * @param j row number
+         * @param k column number
+         * @param x cell number
+         * @return index of the flat 5D array
+         */
+        inline uint64_t index(int sect,int i, int j, int k, int x);
         
         /**
          * @brief MVM tile portion computation
@@ -149,7 +215,7 @@ class Pcm : public vp::Component
          * @param i index of the tile
          * @param inc increment value
          */
-        void compute_flat_mvm_tile(int8_t *matrix, int8_t * vector, int64_t * result, int *sector, int tile, int i,int inc);
+        void compute_flat_mvm_tile(pcm_size_t *matrix, input_size_t * vector, int64_t * result, int *sector, int tile, int i,int inc);
 
         /**
          * @brief MVM multithreaded method
@@ -159,7 +225,7 @@ class Pcm : public vp::Component
          * @param sector pointer to the sector array (describes whitch sector/s are active for each tile array)
          * @param result pointer to the output vector
          */
-        void mvm_multithreaded(int8_t* matrix, int8_t * vector, int **sector,int64_t * result);
+        void mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int **sector,int64_t * result);
 
         /**
          * @brief Convert the MVM full sized result to bite array
