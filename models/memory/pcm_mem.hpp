@@ -27,6 +27,7 @@
 #endif
 
 enum class CMD : uint32_t{
+    CMD_MASK = 0xF0000000,
     CMD_COMPUTE = 0x00000000,
     CMD_PARAM = 0x10000000,
     CMD_ABORT = 0x40000000
@@ -34,14 +35,15 @@ enum class CMD : uint32_t{
 
 enum class CMD_SETTINGS : uint32_t{
     CMD_SETTINGS_SECTORS = 0x10000000,
-    CMD_SETTINGS_TWO_STEP_U = 0x10000001,
-    CMD_SETTINGS_TWO_STEP_U_DOUBLE_WEIGHT = 0x10000002,
-    CMD_SETTINGS_T_STEP_S = 0x10000003,
-    CMD_SETTINGS_TWO_STEP_S_DOUBLE_WEIGHT = 0x10000004,
-    CMD_SETTINGS_SINGLE_STEP = 0x10000005,
-    CMD_SETTINGS_FAST_SINGLE_STEP = 0x10000006,
-    CMD_SETTINGS_INPUT_PRECISION = 0x10000007,
-    CMD_SETTINGS_BL = 0x10000008
+    CMD_SETTINGS_TWO_STEP_U = 0x11000000,
+    CMD_SETTINGS_TWO_STEP_U_DOUBLE_WEIGHT = 0x12000000,
+    CMD_SETTINGS_T_STEP_S = 0x13000000,
+    CMD_SETTINGS_TWO_STEP_S_DOUBLE_WEIGHT = 0x14000000,
+    CMD_SETTINGS_SINGLE_STEP = 0x15000000,
+    CMD_SETTINGS_FAST_SINGLE_STEP = 0x16000000,
+    CMD_SETTINGS_INPUT_PRECISION = 0x17000000,
+    CMD_SETTINGS_BL = 0x18000000,
+    CMD_SETTINGS_MASK = 0xFF000000
 };
 
 struct pcm_write_count{
@@ -82,12 +84,19 @@ class Pcm : public vp::Component
 
         static void power_ctrl_sync(vp::Block *__this,bool value);
 
-        //Read and write operations to/from PCM
+        //          Read and write operations to/from PCM
         vp::IoReqStatus handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *data);
+        //load multiple cells as a single weight
+        void Pcm::pcm_load(uint64_t index,pcm_size_t * matrix,uint8_t * byteStream);
         vp::IoReqStatus handle_PCM_read(uint64_t addr, uint64_t size, uint8_t *data);
+        
+        size_t pcm_output_size;
 
         //AIMC Xi write and Yi read
         vp::IoReqStatus handle_Xi_write(vp::IoReq *req);
+
+        //handles settings change with command
+        void aimc_settings(uint32_t cmd);
 
         //AIMC computations start with custom command
         vp::IoReqStatus handle_AIMC_compute(vp::IoReq *req);
@@ -171,8 +180,8 @@ class Pcm : public vp::Component
         int max_shift;
         //  - mask to get the used bits of the cell
         uint8_t mask;
-        //  - true if the computation required singed multiplication or not
-        bool signed_conversion;
+        //  - true if the computation required signed multiplication or not
+        bool signed_computation;
 
 
 
@@ -189,7 +198,7 @@ class Pcm : public vp::Component
          * @return pointer to the 2D array with the enabled sectors
          * @note the output array is allocated in the heap and must be freed by the caller
          */
-        int ** enabled_sectors(uint32_t *configuration_registers);
+        int ** enabled_sectors(uint32_t configuration);
 
         /**
          * @breif flat 5D array index computation

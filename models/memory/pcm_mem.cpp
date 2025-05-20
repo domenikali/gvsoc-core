@@ -51,6 +51,9 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     this->pcm_size = this->cells_per_weight*this->tile_size*this->array_size*this->n_sectors*this->matrix_length;
     this->mvm_full_result = new int64_t[this->matrix_length];
 
+    this->pcm_output_size = (cell_size*this->cells_per_weight)%8>0?1:0;
+    this->pcm_output_size += (cell_size*this->cells_per_weight-((cell_size*this->cells_per_weight)%8))/8;
+
     //number of bytes for each Yi value in the output vector (tells how many bytes are needed to store the output value using all it's aviable bits)
     this->response_byte_size = this->output_size%(sizeof(uint8_t))+1;
     this->response_byte_size+=((this->output_size - this->response_byte_size)/(sizeof(uint8_t)*8));
@@ -127,18 +130,42 @@ vp::IoReqStatus Pcm::handle_PCM_read(uint64_t addr, uint64_t size, uint8_t *data
         this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: read out of bounds\n");
         return vp::IO_REQ_INVALID;
     }
+
+    size_t output_buffer_size = this->pcm_width_log2/8;
+    uint8_t * pcm_data = new uint8_t[output_buffer_size];
+
+    for(int i=0;i<output_buffer_size;i++){
+        this->pcm_load(addr+i,this->pcm_cells,&pcm_data[i*this->pcm_output_size]);
+    }
+
+
     //read the PCM value from the memory
-    memcpy((void *)data, (void*)this->pcm_cells[addr], size);
+    memcpy((void *)data, (void*)this->pcm_cells[addr], output_buffer_size);
     return vp::IO_REQ_OK;
 }
 
+void Pcm::pcm_load(uint64_t index,pcm_size_t * matrix,uint8_t * byteStream){
+    uint64_t value = 0;
+
+    for(int i=0;i<this->cells_per_weight;i++){
+        //std::cout<<std::bitset<cell_size>(matrix[index*nCells+i])<<std::endl;
+        value |= (matrix[index*this->cells_per_weight+i]&this->mask) << ((this->cells_per_weight-i-1)*cell_size);
+    }
+    //std::cout<<std::bitset<64>(value)<<std::endl;
+
+    for(int i=0;i<this->pcm_output_size;i++){
+        byteStream[this->pcm_output_size-i-1] = value >> (i*8) & 0xFF;
+    }
+
+}
+
+//TODO: this is (mostly) wrong
 vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *data){
     if(addr>this->pcm_size){
         this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: write out of bounds\n");
         return vp::IO_REQ_INVALID;
     }
 
-    
     uint64_t value ;//TODO: value need to be extracted from the data buffer
 
     //the cell is reseted each time a write is perfromed however the write happens only if the value is different from 0
@@ -167,23 +194,21 @@ vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
     for(int i=0;i<4;i++){
         cmd = (cmd<<8)+req->get_data()[i];
     }
-
-    switch(cmd&0xF0000000){
-        case 0x00000000:
+    switch(cmd&(uint32_t)CMD::CMD_MASK){
+        case (uint32_t)CMD::CMD_COMPUTE:
             _this->trace.msg("AIMC: Compute command\n");
             _this->handle_AIMC_compute(req);
-            break;
-        break;
-        case 0x10000000:
-            _this->trace.msg("AIMC: Xi write\n");
-            break;
-        
-        case 0x40000000:
-        _this->
-            trace.msg("AIMC: Yi read\n");
-            break;
-    }
 
+        case (uint32_t)CMD::CMD_PARAM:
+            _this->trace.msg("AIMC: Change configuration settings\n");
+            _this->aimc_settings(cmd);
+            return vp::IoReqStatus::IO_REQ_OK;
+
+        case (uint32_t)CMD::CMD_ABORT:
+            _this->trace.msg("AIMC: Computation aborted\n");//TODO: what should this do?
+            return vp::IoReqStatus::IO_REQ_OK;
+    }
+    //TODO: stort this out?
     if(req->get_is_write()){
         return _this->handle_Xi_write(req);
     }
@@ -202,14 +227,57 @@ vp::IoReqStatus Pcm::handle_Xi_write(vp::IoReq *req){
     return vp::IO_REQ_OK;
 }
 
+void Pcm::aimc_settings(uint32_t cmd){
+
+    switch (cmd&(uint32_t)CMD_SETTINGS::CMD_SETTINGS_MASK)
+    {
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_SECTORS:
+        this->enabled_sectors(cmd);
+        break;
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_U:
+        this->signed_computation=false;
+        /* code */
+        break;
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_U_DOUBLE_WEIGHT:
+        this->signed_computation=false;
+
+        /* code */
+        break;
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_T_STEP_S:
+        this->signed_computation=true;
+
+        /* code */
+        break;
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_S_DOUBLE_WEIGHT:
+        this->signed_computation=true;
+
+        /* code */
+        break;
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_SINGLE_STEP:
+        /* code */
+        break;
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_FAST_SINGLE_STEP:
+        /* code */
+        break;
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_INPUT_PRECISION:
+        /* code */
+        break;
+    case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_BL:
+        /* code */
+        break;
+
+    
+    default:
+        break;
+    }
+}
+
 vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
     
     if(!this->event.is_enqueued()){
         this->trace.msg("AIMC computation enqued\n");
         this->pending_req = req;
         
-
-        int ** sectors = this->enabled_sectors(this->configuration_registers);
         //this->mvm_multithreaded(this->pcm_cells, TODO: how to use vectors, sectors, this->mvm_full_result);
         this->convert_to_adc(this->mvm_full_result, this->aimc_response);
         
@@ -297,14 +365,13 @@ void Pcm::adc(int64_t input,uint8_t * output) {
     }  
     //clipping
     uint8_t mask=0xFF;
-    int u_conversion = this->signed_conversion ? 0 : 1; 
+    int u_conversion = this->signed_computation ? 0 : 1; 
     mask>>=(8-(this->output_size)+u_conversion)%8;
     //masking most significant byte
     output[0] &= mask;
-
 }
 
-int ** Pcm::enabled_sectors(uint32_t *configuration_registers){
+int ** Pcm::enabled_sectors(uint32_t configuration){
     int ** sectors = new int*[this->array_size];
     for(int i=0;i<this->n_sectors;i++){
         sectors[i] = new int[this->n_sectors+1];
@@ -322,7 +389,7 @@ int ** Pcm::enabled_sectors(uint32_t *configuration_registers){
       this->used_sectors++;
       i++;
     }
-    this->signed_conversion = true;
+    this->signed_computation = true;
     this->negative_mask =(~0ULL << (this->cell_size*used_sectors*this->cells_per_weight));
     this->negative = 1 << ((this->cell_size*used_sectors*this->cells_per_weight)-1); 
     this->max_shift=(used_sectors*this->cells_per_weight*cell_size )-cell_size;
