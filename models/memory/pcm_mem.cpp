@@ -358,12 +358,22 @@ void Pcm::convert_to_adc(int64_t *input, uint8_t *output){
 }
 
 void Pcm::adc(int64_t input,uint8_t * output) {
+
+    uint64_t max_mask = (~0ULL << this->output_size+1)>>1;
+    uint64_t min_mask = (~0ULL << this->output_size);
+
+    //clipping
+    if(input & max_mask !=0) {
+        input = ~(~1ULL << this->output_size+1);
+    }else if(input & min_mask !=0) {
+        input = ~(~1ULL << this->output_size);
+    }
     
     //output buffer initialization, loads the less significant byte first at the end of the array
     for (int i = 0; i < this->response_byte_size; ++i) {
         output[this->response_byte_size-i-1] = input >> (i * 8) & 0xFF;
     }  
-    //clipping
+    //most important byte masking to match the output size
     uint8_t mask=0xFF;
     int u_conversion = this->signed_computation ? 0 : 1; 
     mask>>=(8-(this->output_size)+u_conversion)%8;
