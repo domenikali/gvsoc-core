@@ -86,6 +86,15 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
         memset(this->pcm_cells, 0, this->pcm_size*sizeof(pcm_size_t));    
     }
 
+    // sector matrix allocation
+    this->sectors = new int8_t*[this->array_size];
+    for(int i=0;i<this->array_size;i++){
+        sectors[i] = new int8_t[this->n_sectors+1];
+        for(int j=0;j<this->n_sectors+1;j++){
+        sectors[i][j] = -1;
+        }
+    }
+
     // Preload the Memory
     js::Config *stim_file_conf = this->get_js_config()->get("stim_file");
     if (stim_file_conf != NULL)
@@ -159,14 +168,16 @@ void Pcm::pcm_load(uint64_t index,pcm_size_t * matrix,uint8_t * byteStream){
 
 }
 
-//TODO: this is (mostly) wrong
 vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *data){
     if(addr>this->pcm_size){
         this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: write out of bounds\n");
         return vp::IO_REQ_INVALID;
     }
 
-    uint64_t value ;//TODO: value need to be extracted from the data buffer
+    uint64_t value =0;//assuming size is bytes passed in the request
+    for(int i=0;i<size;i++){
+        value = (value<<8) | data[i];
+    }
 
     //the cell is reseted each time a write is perfromed however the write happens only if the value is different from 0
     this->pcm_write_count.reset_count++;
@@ -190,6 +201,12 @@ vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *dat
 vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
     Pcm *_this = (Pcm *)__this;
 
+    //if the request is a write it handles it
+    if(req->get_is_write()){
+        return _this->handle_Xi_write(req);
+    }
+    
+    //if the request is not a write handles different commands
     uint32_t cmd;
     for(int i=0;i<4;i++){
         cmd = (cmd<<8)+req->get_data()[i];
@@ -206,15 +223,10 @@ vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
 
         case (uint32_t)CMD::CMD_ABORT:
             _this->trace.msg("AIMC: Computation aborted\n");//TODO: what should this do?
+            _this->aimc_abort();
             return vp::IoReqStatus::IO_REQ_OK;
     }
-    //TODO: stort this out?
-    if(req->get_is_write()){
-        return _this->handle_Xi_write(req);
-    }
-    else{
-        return _this->handle_AIMC_compute(req);
-    }
+    
 }
 
 vp::IoReqStatus Pcm::handle_Xi_write(vp::IoReq *req){
@@ -296,6 +308,11 @@ void Pcm::aimc_computation(vp::Block* __this, vp::ClockEvent *event){
     _this->pending_req->get_resp_port()->resp(_this->pending_req);
 }
 
+void Pcm::aimc_abort(){
+
+
+}
+
 inline uint64_t Pcm::index(int sect,int tile, int row, int column, int cell){
     return ((((sect*this->array_size)+tile)*this->tile_size+row)*this->matrix_length+column)*this->cells_per_weight+cell;
 }
@@ -347,6 +364,7 @@ void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int **sec
     //thread join, not necesary but highly raccomended for extensive mvm use
     for(int i=0;i<threads.size();i++){
         threads[i].join();
+        
     }
 }
 
@@ -381,29 +399,32 @@ void Pcm::adc(int64_t input,uint8_t * output) {
     output[0] &= mask;
 }
 
-int ** Pcm::enabled_sectors(uint32_t configuration){
-    int ** sectors = new int*[this->array_size];
-    for(int i=0;i<this->n_sectors;i++){
-        sectors[i] = new int[this->n_sectors+1];
-        int j=0;
-        int k=0;
-        do{
-            //TODO: condition to configure the sectors 
-            k++;
-        }while (k!= 0);
-    }
+void Pcm::enabled_sectors(uint32_t configuration){
+    
+    uint32_t config_mask = 0x00800000;
+    
 
     this->used_sectors = 0;
-    int i=0;
-    while(sectors[0][i]>=0){
-      this->used_sectors++;
-      i++;
+
+    for(int i=0;i<this->array_size;i++){
+        int k=0;
+        for(int j=0;j<n_sectors;j++){
+        if((configuration&config_mask) != 0){
+            this->sectors[i][k++] = j;
+        }
+        
+        config_mask = config_mask >> 1;
+        }
+        if(k>used_sectors){
+            used_sectors = k;
+        }
+        sectors[i][k] = -1; // End of sector marker
     }
+
     this->signed_computation = true;
     this->negative_mask =(~0ULL << (this->cell_size*used_sectors*this->cells_per_weight));
     this->negative = 1 << ((this->cell_size*used_sectors*this->cells_per_weight)-1); 
     this->max_shift=(used_sectors*this->cells_per_weight*cell_size )-cell_size;
-    return sectors;
 }
 
 void Pcm::free_component(){

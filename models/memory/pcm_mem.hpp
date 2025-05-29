@@ -98,6 +98,10 @@ class Pcm : public vp::Component
         //handles settings change with command
         void aimc_settings(uint32_t cmd);
 
+        vector<pid_t> aimc_threads;
+        //abort AIMC operation
+        void aimc_abort();
+
         //AIMC computations start with custom command
         vp::IoReqStatus handle_AIMC_compute(vp::IoReq *req);
 
@@ -156,6 +160,8 @@ class Pcm : public vp::Component
         //  - AIMC configuration register (i.e. command, tiles and sectors, ...)
         uint32_t *configuration_registers;
         
+        // matrix identifying used sectors during computation
+        int8_t ** sectors;
         //weigth matrix, it's allocatated as a flat array but it's accesed as a 5D matrix
         pcm_size_t * pcm_cells; 
 
@@ -193,12 +199,10 @@ class Pcm : public vp::Component
 
         /**
          * @brief 2D array with enabled sectors
-         * This method returns a 2D array with the enabled sectors for each column
-         * @param configuration_registers pointer to the configuration registers
-         * @return pointer to the 2D array with the enabled sectors
-         * @note the output array is allocated in the heap and must be freed by the caller
+         * This method set a 2D array with the enabled sectors for each column
+         * @param configuration_registers configuration cmd, 32 bits unsigned integer
          */
-        int ** enabled_sectors(uint32_t configuration);
+        void enabled_sectors(uint32_t configuration);
 
         /**
          * @breif flat 5D array index computation
