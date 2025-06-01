@@ -96,7 +96,7 @@ class Pcm : public vp::Component
         vp::IoReqStatus handle_Xi_write(vp::IoReq *req);
 
         //handles settings change with command
-        void aimc_settings(uint32_t cmd);
+        vp::IoReqStatus aimc_settings(uint32_t cmd);
 
         vector<pid_t> aimc_threads;
         //abort AIMC operation
@@ -154,16 +154,17 @@ class Pcm : public vp::Component
         //total size in bytes of the PCM module
         size_t pcm_size;
 
-        //  Registers for AIMC: 
-        //  - input registers (Xi values)
-        uint32_t *input_registers;
-        //  - AIMC configuration register (i.e. command, tiles and sectors, ...)
+    
+        // AIMC configuration register (i.e. command, tiles and sectors, ...)
         uint32_t *configuration_registers;
         
         // matrix identifying used sectors during computation
         int8_t ** sectors;
         //weigth matrix, it's allocatated as a flat array but it's accesed as a 5D matrix
         pcm_size_t * pcm_cells; 
+
+        // Xi array
+        input_size_t * input_vector;
 
         //AIMC responses helper:
         //  - number of bytes for each Yi output value
@@ -228,7 +229,7 @@ class Pcm : public vp::Component
          * @param i index of the tile
          * @param inc increment value
          */
-        void compute_flat_mvm_tile(pcm_size_t *matrix, input_size_t * vector, int64_t * result, int *sector, int tile, int i,int inc);
+        void compute_flat_mvm_tile(pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc);
 
         /**
          * @brief MVM multithreaded method
@@ -238,7 +239,7 @@ class Pcm : public vp::Component
          * @param sector pointer to the sector array (describes whitch sector/s are active for each tile array)
          * @param result pointer to the output vector
          */
-        void mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int **sector,int64_t * result);
+        void mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **sector,int64_t * result);
 
         /**
          * @brief Convert the MVM full sized result to bite array

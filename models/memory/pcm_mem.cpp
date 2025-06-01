@@ -21,7 +21,7 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     //initialize statistics parameters
     this->pcm_read_count=0;
     this->pcm_write_count.reset_count = 0;
-    this->pcm_write_count.write_count = 0; // Assuming 'count' is the correct member name
+    this->pcm_write_count.write_count = 0;
     this->aimc_compute_count=0;
 
     //js config parameters
@@ -58,22 +58,22 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     this->response_byte_size = this->output_size%(sizeof(uint8_t))+1;
     this->response_byte_size+=((this->output_size - this->response_byte_size)/(sizeof(uint8_t)*8));
 
-    //number of Xi adresses in bit is equal to the number of Xi values deided by the width of the input bus
+    //number of Xi adresses in bit is equal to the number of Xi values devided by the width of the input bus
     this->Xi_adresses = matrix_length/input_width_log2;
     //number of pcm cells adresses in bit is equal to the number of cells devided by the width of the pcm bus
     this->pcm_cells_adresses = (matrix_length*matrix_length)/pcm_width_log2;
 
 
     trace.msg("Builing PCM input vector (Size: 0x%x)\n",this->matrix_length);
-    //input value array allocation, 
-    this->input_registers = new uint32_t[(this->matrix_length* this->Xi_size)/(32-(32%this->Xi_size))];//this formula is used to allocate the register input bufffer in 32bits spaces, the Xi_size can range from 1 to 32, worst case 1 register is associated with 1 input value (in cases like Xi_size > 16)
-    if(this->input_registers==nullptr){
+    //input value array allocation
+    this->input_vector = new input_size_t[this->matrix_length];
+    if(this->input_vector==nullptr){
         this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: input vector allocation failed\n");
         throw std::bad_alloc();
     }
-    //memset(this->input_registers, 0,); do i need this?
+    memset(this->input_vector, 0,this->matrix_length*sizeof(input_size_t)); 
 
-    trace.msg("Builing PCM Memory (Size: 0x%x, Cell Byte Size: 0x%x)\n",this->pcm_size,sizeof(pcm_size_t));
+    trace.msg("Builing PCM Memory (Size: 0x%x, Cell Size in bytes: 0x%x)\n",this->pcm_size,sizeof(pcm_size_t));
     //matrix allocation
     this->pcm_cells = new pcm_size_t[this->pcm_size];
     if(this->pcm_cells==nullptr){
@@ -94,6 +94,9 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
         sectors[i][j] = -1;
         }
     }
+
+    //by default the AIMC is signed
+    this->signed_computation = true;
 
     // Preload the Memory
     js::Config *stim_file_conf = this->get_js_config()->get("stim_file");
@@ -140,16 +143,16 @@ vp::IoReqStatus Pcm::handle_PCM_read(uint64_t addr, uint64_t size, uint8_t *data
         return vp::IO_REQ_INVALID;
     }
 
-    size_t output_buffer_size = this->pcm_width_log2/8;
+    size_t output_buffer_size = this->pcm_width_log2;
     uint8_t * pcm_data = new uint8_t[output_buffer_size];
 
     for(int i=0;i<output_buffer_size;i++){
         this->pcm_load(addr+i,this->pcm_cells,&pcm_data[i*this->pcm_output_size]);
     }
 
-
     //read the PCM value from the memory
     memcpy((void *)data, (void*)this->pcm_cells[addr], output_buffer_size);
+    delete[] pcm_data;
     return vp::IO_REQ_OK;
 }
 
@@ -193,8 +196,6 @@ vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *dat
         this->pcm_cells[addr*this->cells_per_weight+i] = mask&value;     
         value = value >> cell_size;
     }
-    //write the PCM value into the memory
-    memcpy((void*)this->pcm_cells[addr], (void *)data, size);
     return vp::IO_REQ_OK;
 }
 
@@ -214,7 +215,7 @@ vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
     switch(cmd&(uint32_t)CMD::CMD_MASK){
         case (uint32_t)CMD::CMD_COMPUTE:
             _this->trace.msg("AIMC: Compute command\n");
-            _this->handle_AIMC_compute(req);
+            return _this->handle_AIMC_compute(req);
 
         case (uint32_t)CMD::CMD_PARAM:
             _this->trace.msg("AIMC: Change configuration settings\n");
@@ -222,24 +223,33 @@ vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
             return vp::IoReqStatus::IO_REQ_OK;
 
         case (uint32_t)CMD::CMD_ABORT:
-            _this->trace.msg("AIMC: Computation aborted\n");//TODO: what should this do?
+            _this->trace.msg("AIMC: Computation aborted\n");
             _this->aimc_abort();
             return vp::IoReqStatus::IO_REQ_OK;
     }
-    
 }
 
 vp::IoReqStatus Pcm::handle_Xi_write(vp::IoReq *req){
     uint64_t addr = req->get_addr();
-    uint64_t size = req->get_size();
+    uint64_t size = req->get_size();//assuming size in bytes
     uint8_t *data = req->get_data();
 
-    //TODO: write data into input registers (maybe just a standard array?)
+    if(size>this->input_width_log2){
+        size = this->input_width_log2;
+        this->trace.msg(vp::Trace::LEVEL_WARNING,"AIMC: Xi write size too big, max size is %d bytes, data croped\n",this->input_width_log2);
+    }
+    if(addr>=this->matrix_length||addr+size>this->matrix_length){
+        this->trace.msg(vp::Trace::LEVEL_ERROR,"AIMC: Xi write out of bounds, addr: 0x%x, size: %d\n",addr,size);
+        return vp::IO_REQ_INVALID;
+    }
+
+    this->trace.msg("AIMC: Writing Xi values at address 0x%x, size %d\n", addr, size);
+    memcpy(&this->input_vector[addr], data, size);
 
     return vp::IO_REQ_OK;
 }
 
-void Pcm::aimc_settings(uint32_t cmd){
+vp::IoReqStatus Pcm::aimc_settings(uint32_t cmd){
 
     switch (cmd&(uint32_t)CMD_SETTINGS::CMD_SETTINGS_MASK)
     {
@@ -252,17 +262,14 @@ void Pcm::aimc_settings(uint32_t cmd){
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_U_DOUBLE_WEIGHT:
         this->signed_computation=false;
-
         /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_T_STEP_S:
         this->signed_computation=true;
-
         /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_S_DOUBLE_WEIGHT:
         this->signed_computation=true;
-
         /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_SINGLE_STEP:
@@ -280,7 +287,8 @@ void Pcm::aimc_settings(uint32_t cmd){
 
     
     default:
-        break;
+        this->trace.msg(vp::Trace::LEVEL_ERROR,"AIMC: Unknown command settings 0x%x\n",cmd);
+        return vp::IO_REQ_INVALID;
     }
 }
 
@@ -290,7 +298,7 @@ vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
         this->trace.msg("AIMC computation enqued\n");
         this->pending_req = req;
         
-        //this->mvm_multithreaded(this->pcm_cells, TODO: how to use vectors, sectors, this->mvm_full_result);
+        this->mvm_multithreaded(this->pcm_cells, this->input_vector, this->sectors, this->mvm_full_result);
         this->convert_to_adc(this->mvm_full_result, this->aimc_response);
         
 
@@ -304,7 +312,7 @@ void Pcm::aimc_computation(vp::Block* __this, vp::ClockEvent *event){
     Pcm *_this = (Pcm *)__this;
     _this->trace.msg("AIMC computation result returned\n");
     
-    //*(uint8_t*)_this->pending_req->get_data() = _this->aimc_response;
+    _this->pending_req->data = _this->aimc_response;
     _this->pending_req->get_resp_port()->resp(_this->pending_req);
 }
 
@@ -317,7 +325,7 @@ inline uint64_t Pcm::index(int sect,int tile, int row, int column, int cell){
     return ((((sect*this->array_size)+tile)*this->tile_size+row)*this->matrix_length+column)*this->cells_per_weight+cell;
 }
 
-void Pcm::compute_flat_mvm_tile(pcm_size_t *matrix, input_size_t * vector, int64_t * result, int *sector, int tile, int i,int inc){
+void Pcm::compute_flat_mvm_tile(pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc){
     for(int j=i;j<i+inc;j++){
         for(int k=0;k<this->matrix_length;k++){
             //create an all-zero int64_t
@@ -349,7 +357,7 @@ void Pcm::compute_flat_mvm_tile(pcm_size_t *matrix, input_size_t * vector, int64
 }
 
   
-void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int **sector,int64_t * result){
+void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **sector,int64_t * result){
     //result vector initialization
     memset(result,0,sizeof(int64_t)*this->matrix_length);
     //threads vector
@@ -402,8 +410,6 @@ void Pcm::adc(int64_t input,uint8_t * output) {
 void Pcm::enabled_sectors(uint32_t configuration){
     
     uint32_t config_mask = 0x00800000;
-    
-
     this->used_sectors = 0;
 
     for(int i=0;i<this->array_size;i++){
@@ -421,17 +427,20 @@ void Pcm::enabled_sectors(uint32_t configuration){
         sectors[i][k] = -1; // End of sector marker
     }
 
-    this->signed_computation = true;
     this->negative_mask =(~0ULL << (this->cell_size*used_sectors*this->cells_per_weight));
     this->negative = 1 << ((this->cell_size*used_sectors*this->cells_per_weight)-1); 
     this->max_shift=(used_sectors*this->cells_per_weight*cell_size )-cell_size;
 }
 
 void Pcm::free_component(){
-    delete[] this->input_registers;
+    delete[] this->input_vector;
     delete[] this->pcm_cells;
     delete[] this->mvm_full_result;
     delete[] this->aimc_response;
+    for(int i=0;i<this->array_size;i++){
+        delete[] this->sectors[i];
+    }
+    delete[] this->sectors;
 }
 
 void Pcm::power_ctrl_sync(vp::Block *__this, bool value)
