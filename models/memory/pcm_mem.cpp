@@ -39,6 +39,8 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     this->n_sectors=this->get_js_config()->get("n_sectors")->get_int();
     this->matrix_length=array_size*tile_size;
 
+    aimc_helper_inti(this->aimc_compute_helper, this->matrix_length, this->tile_size, this->array_size, this->n_sectors, this->cells_per_weight,this->cell_size,this->mask);
+
     this->pcm_width_log2=this->get_js_config()->get("pcm_width_log2")->get_int();
     this->input_width_log2=this->get_js_config()->get("input_width_log2")->get_int();
     this->output_width_log2=this->get_js_config()->get("output_width_log2")->get_uint();
@@ -187,9 +189,6 @@ vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *dat
     if(value!=0){
         this->pcm_write_count.write_count++;
     }
-
-    //create a mask to select the bits of the cell
-    uint64_t mask = (1<< this->cell_size)-1;
   
     //insert the max ammount of bits in each cell then shift the value to the right
     for(int i=this->cell_size-1;i>=0;i--){
@@ -227,6 +226,8 @@ vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
             _this->aimc_abort();
             return vp::IoReqStatus::IO_REQ_OK;
     }
+    //if not recognized
+    return vp::IoReqStatus::IO_REQ_INVALID;
 }
 
 vp::IoReqStatus Pcm::handle_Xi_write(vp::IoReq *req){
@@ -285,11 +286,10 @@ vp::IoReqStatus Pcm::aimc_settings(uint32_t cmd){
         /* code */
         break;
 
-    
-    default:
-        this->trace.msg(vp::Trace::LEVEL_ERROR,"AIMC: Unknown command settings 0x%x\n",cmd);
-        return vp::IO_REQ_INVALID;
     }
+    //if not recognized (to avoid warnings)    
+    this->trace.msg(vp::Trace::LEVEL_ERROR,"AIMC: Unknown command settings 0x%x\n",cmd);
+    return vp::IO_REQ_INVALID;
 }
 
 vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
@@ -321,37 +321,37 @@ void Pcm::aimc_abort(){
 
 }
 
-inline uint64_t Pcm::index(int sect,int tile, int row, int column, int cell){
-    return ((((sect*this->array_size)+tile)*this->tile_size+row)*this->matrix_length+column)*this->cells_per_weight+cell;
+inline uint64_t Pcm::index(aimc_compute_helper_t * helper,int sect,int tile, int row, int column, int cell){
+    return ((((sect*helper->array_size)+tile)*helper->tile_size+row)*helper->matrix_length+column)*helper->cells_per_weight+cell;
 }
 
-void Pcm::compute_flat_mvm_tile(pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc){
+void Pcm::compute_flat_mvm_tile(aimc_compute_helper_t * helper,pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc){
     for(int j=i;j<i+inc;j++){
-        for(int k=0;k<this->matrix_length;k++){
+        for(int k=0;k<helper->matrix_length;k++){
             //create an all-zero int64_t
             int64_t weight=static_cast<int64_t>(0);
             uint8_t y=0;
             //create an indexing for the bit shift
-            int bit_index=this->max_shift;
+            int bit_index=helper->max_shift;
             
             while(sector[y]>=0){
-                for(int x=0;x<this->cells_per_weight;x++){
+                for(int x=0;x<helper->cells_per_weight;x++){
                     //generate the index of the flat 5D array
-                    uint64_t idx = index(sector[y],i,j,k,x);
+                    uint64_t idx = index(helper,sector[y],i,j,k,x);
                     //the mask is used to select the bits of the cell, then it's shifted to the right position
-                    weight |= ((matrix[idx]&this->mask)<<bit_index);
+                    weight |= ((matrix[idx]&helper->mask)<<bit_index);
                     //the bit index is decremented by the size of the cell
-                    bit_index-=this->cell_size;   
+                    bit_index-=helper->cell_size;   
                 }
                 y++;
             }
             //check if the weight is negative
-            if((weight&this->negative)!=0){
+            if((weight&helper->negative)!=0){
                 //if the weight is negative make the 2's complement of it
-                weight = static_cast<int64_t>(static_cast<uint64_t>(weight) | negative_mask);
+                weight = static_cast<int64_t>(static_cast<uint64_t>(weight) | helper->negative_mask);
             }
             //write the result into the result vector
-            result[tile*this->tile_size+j] += weight * vector[k];
+            result[tile*helper->tile_size+j] += weight * vector[k];
         }
     }
 }
@@ -372,7 +372,6 @@ void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **
     //thread join, not necesary but highly raccomended for extensive mvm use
     for(int i=0;i<threads.size();i++){
         threads[i].join();
-        
     }
 }
 
@@ -430,6 +429,8 @@ void Pcm::enabled_sectors(uint32_t configuration){
     this->negative_mask =(~0ULL << (this->cell_size*used_sectors*this->cells_per_weight));
     this->negative = 1 << ((this->cell_size*used_sectors*this->cells_per_weight)-1); 
     this->max_shift=(used_sectors*this->cells_per_weight*cell_size )-cell_size;
+    aimc_helper_param(this->aimc_compute_helper, this->negative_mask, this->negative, this->max_shift);
+  
 }
 
 void Pcm::free_component(){

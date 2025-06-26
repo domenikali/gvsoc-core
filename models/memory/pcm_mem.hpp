@@ -53,6 +53,63 @@ struct pcm_write_count{
 typedef struct pcm_write_count pcm_write_count_t;
 
 /**
+ * @brief AIMC compute helper structure
+ * This structure contains all the parameters needed to perform AIMC computations.
+ * It is used to pass parameters to the AIMC threads.
+ * @author Leonardo Domenicali, UniBo (leonardo.domenicali@gmail.com | leonardo.domenicali@studio.unibo.it)
+ */
+struct aimc_compute_helper{
+    int cells_per_weight;
+    int tile_size;
+    int array_size;
+    int n_sectors;
+    int matrix_length;
+    int cell_size;
+    uint64_t negative_mask;
+    uint64_t negative;
+    int max_shift;
+    uint8_t mask;
+};
+typedef struct aimc_compute_helper aimc_compute_helper_t;
+
+/**
+ * @brief AIMC helper initialization
+ * This function initializes the AIMC compute helper structure with the given parameters.
+ * @param helper Pointer to the AIMC compute helper structure to initialize.
+ * @param matrix_length Length of the matrix.
+ * @param tile_size Size of the tile.
+ * @param array_size Size of the array.
+ * @param n_sectors Number of sectors.
+ * @param cells_per_weight Number of cells per weight.
+ * @param mask Mask to apply to the weights.
+ * @author Leonardo Domenicali, UniBo (leonardo.domenicali@gmail.com | leonardo.domenicali@studio.unibo.it)
+ */
+void aimc_helper_inti(aimc_compute_helper_t *helper, int matrix_length, int tile_size, int array_size, int n_sectors, int cells_per_weight,int cell_size,uint8_t mask){
+    helper->cells_per_weight = cells_per_weight;
+    helper->tile_size = tile_size;
+    helper->array_size = array_size;
+    helper->n_sectors = n_sectors;
+    helper->matrix_length = matrix_length;
+    helper->mask =mask;
+    helper->cell_size = cell_size;
+}
+
+/**
+ * @brief AIMC helper parameter setting
+ * This function sets the parameters of the AIMC compute helper structure.
+ * @param helper Pointer to the AIMC compute helper structure to set.
+ * @param negative_mask Mask to apply to the negative weights.
+ * @param negative Value to use for negative weights.
+ * @param max_shift Maximum shift value for the weights.
+ * @author Leonardo Domenicali, UniBo (leonardo.domenicali@gmail.com | leonardo.domenicali@studio.unibo.it)
+ */
+void aimc_helper_param(aimc_compute_helper_t *helper,uint64_t negative_mask, uint64_t negative, int max_shift){
+    helper->negative_mask = negative_mask;
+    helper->negative = negative;
+    helper->max_shift = max_shift;
+}
+
+/**
  * @brief PCM module with AIMC capabilities
  * This class models the behaviour of a PCM module with AIMC capabilities, this module is composed of multiple PCM tiles divided into arrays.
  * In order to access this module there are two buses, one to access PMC arrays to load and store values (the PMC module can be used solely as a non-volatile memory),
@@ -87,7 +144,7 @@ class Pcm : public vp::Component
         //          Read and write operations to/from PCM
         vp::IoReqStatus handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *data);
         //load multiple cells as a single weight
-        void Pcm::pcm_load(uint64_t index,pcm_size_t * matrix,uint8_t * byteStream);
+        void pcm_load(uint64_t index,pcm_size_t * matrix,uint8_t * byteStream);
         vp::IoReqStatus handle_PCM_read(uint64_t addr, uint64_t size, uint8_t *data);
         
         size_t pcm_output_size;
@@ -190,6 +247,8 @@ class Pcm : public vp::Component
         //  - true if the computation required signed multiplication or not
         bool signed_computation;
 
+        aimc_compute_helper_t * aimc_compute_helper;
+
 
 
         //TODO: figure out how to map the PCM cells in a smart way (map? flat out? O(1) space c. would be better but I'm not sure if possible)
@@ -215,7 +274,7 @@ class Pcm : public vp::Component
          * @param x cell number
          * @return index of the flat 5D array
          */
-        inline uint64_t index(int sect,int i, int j, int k, int x);
+        static inline uint64_t index(aimc_compute_helper_t * helper,int sect,int i, int j, int k, int x);
         
         /**
          * @brief MVM tile portion computation
@@ -229,7 +288,7 @@ class Pcm : public vp::Component
          * @param i index of the tile
          * @param inc increment value
          */
-        void compute_flat_mvm_tile(pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc);
+        static void compute_flat_mvm_tile(aimc_compute_helper_t * helper,pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc);
 
         /**
          * @brief MVM multithreaded method
