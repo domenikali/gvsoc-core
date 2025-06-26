@@ -365,7 +365,7 @@ void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **
     //loops, each thread will compute a part of a tile of the matrix
     for(int i=0;i<this->array_size;i++){
         for(int j=0;j<2;j++){
-            std::thread t(compute_flat_mvm_tile, matrix, vector, result, sector[i], i,j*64, 64);
+            std::thread t(compute_flat_mvm_tile,aimc_compute_helper, matrix, vector, result, sector[i], i,j*64, 64);
             threads.push_back(move(t));
         }
     }
