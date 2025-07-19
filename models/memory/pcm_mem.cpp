@@ -24,6 +24,9 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     this->pcm_write_count.write_count = 0;
     this->aimc_compute_count=0;
 
+    //initialize helper
+    this->aimc_compute_helper = new aimc_compute_helper_t();
+
     //js config parameters
     js::Config *js_config = get_js_config()->get("power_trigger");
     this->powered_up = js_config != NULL && js_config->get_bool();
@@ -65,6 +68,7 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     //number of pcm cells adresses in bit is equal to the number of cells devided by the width of the pcm bus
     this->pcm_cells_adresses = (matrix_length*matrix_length)/pcm_width_log2;
 
+    this->aimc_response = new uint8_t[this->matrix_length * this->response_byte_size];
 
     trace.msg("Builing PCM input vector (Size: 0x%x)\n",this->matrix_length);
     //input value array allocation
@@ -209,10 +213,12 @@ vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
     }
     
     //if the request is not a write handles different commands
-    uint32_t cmd;
-    for(int i=0;i<4;i++){
-        cmd = (cmd<<8)+req->get_data()[i];
-    }
+    uint32_t cmd=0x0;
+    // for(int i=0;i<4;i++){
+    //     cmd = (cmd<<8)+req->get_data()[i];
+    //     _this->trace.msg("AIMC: Command byte %d: 0x%x\n", i, req->get_data()[i]);
+    // }
+    _this->trace.msg("AIMC: Command received: 0x%x\n", cmd);
     switch(cmd&(uint32_t)CMD::CMD_MASK){
         case (uint32_t)CMD::CMD_COMPUTE:
             _this->trace.msg("AIMC: Compute command\n");
@@ -302,7 +308,7 @@ vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
         
         this->mvm_multithreaded(this->pcm_cells, this->input_vector, this->sectors, this->mvm_full_result);
         this->convert_to_adc(this->mvm_full_result, this->aimc_response);
-        
+        this->event.enqueue(this->aimc_latency);
 
         return vp::IO_REQ_PENDING;
 
@@ -367,7 +373,7 @@ void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **
     //loops, each thread will compute a part of a tile of the matrix
     for(int i=0;i<this->array_size;i++){
         for(int j=0;j<2;j++){
-            std::thread t(compute_flat_mvm_tile,aimc_compute_helper, matrix, vector, result, sector[i], i,j*64, 64);
+            std::thread t(compute_flat_mvm_tile,this->aimc_compute_helper, matrix, vector, result, sector[i], i,j*64, 64);
             threads.push_back(move(t));
         }
     }
@@ -444,6 +450,7 @@ void Pcm::free_component(){
         delete[] this->sectors[i];
     }
     delete[] this->sectors;
+    delete this->aimc_compute_helper;
 }
 
 void Pcm::power_ctrl_sync(vp::Block *__this, bool value)

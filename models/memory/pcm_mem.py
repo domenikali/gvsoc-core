@@ -82,6 +82,7 @@ class Pcm(gvsoc.systree.Component):
         super().__init__(parent, name)
 
         self.add_sources(['memory/pcm_mem.cpp'])
+        self.add_sources(['memory/pcm_mem.hpp'])
 
 
         self.add_properties({
@@ -98,6 +99,8 @@ class Pcm(gvsoc.systree.Component):
             'width_log2': width_log2,
             'aimc_bus_freq':aimc_bus_freq,
             'aimc_latency': aimc_latency,
+            'pcm_read_latency': pcm_read_latency,
+            'pcm_write_latency': pcm_write_latency,
             'stim_file': stim_file,
             'power_trigger': power_trigger,
             'latency': latency,

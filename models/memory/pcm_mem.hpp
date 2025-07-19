@@ -5,6 +5,8 @@
 #include <vp/itf/wire.hpp>
 #include <stdio.h>
 #include <string.h>
+#include <thread>
+#include <vector>
 
 #ifdef PCM_SIZE_8
     typedef uint8_t pcm_size_t;
@@ -84,7 +86,7 @@ typedef struct aimc_compute_helper aimc_compute_helper_t;
  * @param mask Mask to apply to the weights.
  * @author Leonardo Domenicali, UniBo (leonardo.domenicali@gmail.com | leonardo.domenicali@studio.unibo.it)
  */
-void aimc_helper_inti(aimc_compute_helper_t *helper, int matrix_length, int tile_size, int array_size, int n_sectors, int cells_per_weight,int cell_size,uint8_t mask){
+inline void aimc_helper_inti(aimc_compute_helper_t *helper, int matrix_length, int tile_size, int array_size, int n_sectors, int cells_per_weight,int cell_size,uint8_t mask){
     helper->cells_per_weight = cells_per_weight;
     helper->tile_size = tile_size;
     helper->array_size = array_size;
@@ -103,7 +105,7 @@ void aimc_helper_inti(aimc_compute_helper_t *helper, int matrix_length, int tile
  * @param max_shift Maximum shift value for the weights.
  * @author Leonardo Domenicali, UniBo (leonardo.domenicali@gmail.com | leonardo.domenicali@studio.unibo.it)
  */
-void aimc_helper_param(aimc_compute_helper_t *helper,uint64_t negative_mask, uint64_t negative, int max_shift){
+inline void aimc_helper_param(aimc_compute_helper_t *helper,uint64_t negative_mask, uint64_t negative, int max_shift){
     helper->negative_mask = negative_mask;
     helper->negative = negative;
     helper->max_shift = max_shift;
@@ -121,7 +123,7 @@ class Pcm : public vp::Component
     public:
         Pcm(vp::ComponentConf &config);
 
-        void reset (bool active);
+        //void reset (bool active);
         /**
          * @brief static PCM related call
          * This method allow for load and store from and to the PCMs cells
