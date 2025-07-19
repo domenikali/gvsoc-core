@@ -126,6 +126,7 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
 
 vp::IoReqStatus Pcm::req_PCM(vp::Block *__this, vp::IoReq *req){
     Pcm *_this = (Pcm *)__this;
+    _this->trace.msg(vp::Trace::LEVEL_INFO,"PCM: Request received, addr: 0x%x, size: %d, is_write: %d\n",req->get_addr(),req->get_size(),req->get_is_write());
 
     if(req->get_is_write()){
         req->inc_latency(_this->pcm_write_latency);
@@ -200,6 +201,7 @@ vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *dat
 
 vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
     Pcm *_this = (Pcm *)__this;
+    _this->trace.msg(vp::Trace::LEVEL_INFO,"AIMC: Request received, addr: 0x%x, size: %d, is_write: %d\n",req->get_addr(),req->get_size(),req->get_is_write());
 
     //if the request is a write it handles it
     if(req->get_is_write()){
