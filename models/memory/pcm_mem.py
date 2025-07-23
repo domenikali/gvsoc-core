@@ -69,7 +69,7 @@ class Pcm(gvsoc.systree.Component):
                  n_sectors:int=4,
                  pcm_width_log2: int=64,
                  input_width_log2: int=64,
-                 output_width_log2: int=88,
+                 output_width_log2: int=64,
                  width_log2: int=2,
                  aimc_bus_freq: int=500000,
                  aimc_latency: int=0,
@@ -118,3 +118,5 @@ class Pcm(gvsoc.systree.Component):
             The slave interface
         """
         return gvsoc.systree.SlaveItf(self, 'input', signature='io')
+    
+

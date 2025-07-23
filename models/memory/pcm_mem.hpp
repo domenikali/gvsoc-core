@@ -124,6 +124,14 @@ class Pcm : public vp::Component
         Pcm(vp::ComponentConf &config);
 
         //void reset (bool active);
+
+        /**
+         * @brief PCM request handler
+         * This method dispatches the request to the right method based on the address of the request.
+         */
+
+        static vp::IoReqStatus req_PCM_module(vp::Block *__this, vp::IoReq *req);   
+
         /**
          * @brief static PCM related call
          * This method allow for load and store from and to the PCMs cells
@@ -151,8 +159,11 @@ class Pcm : public vp::Component
         
         size_t pcm_output_size;
 
-        //AIMC Xi write and Yi read
+        //AIMC Xi write
         vp::IoReqStatus handle_Xi_write(vp::IoReq *req);
+
+        //AIMC Yi read
+        vp::IoReqStatus handle_Yi_read(vp::IoReq *req);
 
         //handles settings change with command
         vp::IoReqStatus aimc_settings(uint32_t cmd);
@@ -168,10 +179,12 @@ class Pcm : public vp::Component
         static void aimc_computation(vp::Block* __this, vp::ClockEvent *event);
         
         //slave port for PCM related operations
-        vp::IoSlave input_PCM;
+        //vp::IoSlave input_PCM;
         //slave port for AIMC related operations
-        vp::IoSlave input_AIMC;
+        //vp::IoSlave input_AIMC;
 
+        //slave port for PCM & AIMC related operations, dispatch to the right method based on addr 
+        vp::IoSlave input_PCM_module;
 
         //module powered (true powered, fase unpowered)
         bool powered_up;
