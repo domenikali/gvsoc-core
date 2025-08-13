@@ -140,16 +140,14 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     }
 }
 
-vp::IoReqStatus Pcm::req_PCM_module(vp::Block *__this, vp::IoReq *req){
-    //first address is for AIMC the remaining is for PCM
-
-    
+vp::IoReqStatus Pcm::req_PCM_module(vp::Block *__this, vp::IoReq *req){    
     Pcm *_this = (Pcm *)__this;
-    _this->trace.msg("req size: 0x%x\t req addr: 0x%x\n",req->get_size(),req->get_addr());
+    //_this->trace.msg("req size: 0x%x\t req addr: 0x%x\n",req->get_size(),req->get_addr());
+    
     if(req->get_addr() < (_this->matrix_length +sizeof(uint32_t))){//32_t size of cmd reg + Xi vector
         return Pcm::req_AIMC(__this, req);
     }
-    else{
+    else{//not required PCM direct access
         req->set_addr(req->get_addr() - (_this->matrix_length + sizeof(uint32_t)));
         return Pcm::req_PCM(__this, req);
     }
@@ -162,23 +160,23 @@ vp::IoReqStatus Pcm::req_PCM(vp::Block *__this, vp::IoReq *req){
 
     if(req->get_is_write()){
         req->inc_latency(_this->pcm_write_latency);
-        return _this->handle_PCM_write(req->get_addr(), req->get_size(),req->get_data());
+        return _this->handle_PCM_write(req);
     }
     else{
         req->inc_latency(_this->pcm_read_latency);
-        _this->pcm_read_count++;
-        return _this->handle_PCM_read(req->get_addr(), req->get_size(),req->get_data());
+        _this->pcm_read_count++;//increment pcm read count for performance statistics
+        return _this->handle_PCM_read(req);
     }
 
 }
 
-vp::IoReqStatus Pcm::handle_PCM_read(uint64_t addr, uint64_t size, uint8_t *data){
-    if(addr>this->pcm_size){
+vp::IoReqStatus Pcm::handle_PCM_read(vp::IoReq *req){
+    if(req->addr>this->pcm_size){
         this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: read out of bounds\n");
         return vp::IO_REQ_INVALID;
     }
 
-    size_t output_buffer_size = 4;
+    //size_t output_buffer_size = 4;
     //uint8_t * pcm_data = new uint8_t[output_buffer_size];
 
     // for(int i=0;i<output_buffer_size;i++){
@@ -187,14 +185,16 @@ vp::IoReqStatus Pcm::handle_PCM_read(uint64_t addr, uint64_t size, uint8_t *data
 
     //read the PCM value from the memory
     //uint64_t pcm_value = 1000;
-    memcpy((void *)data, (void*)(this->pcm_cells+addr), output_buffer_size);
-    this->trace.msg(vp::Trace::LEVEL_DEBUG,"PCM: read value: 0x%x\n",*(uint32_t *)data);
+    memcpy(req->data, (void*)(this->pcm_cells+req->addr), req->get_size());
+    //this->trace.msg(vp::Trace::LEVEL_DEBUG,"PCM: read value: 0x%x\n",*(uint32_t *)data);
     //delete[] pcm_data;
     return vp::IO_REQ_OK;
 }
 
 //FIXEME: this is valid only for 1<=cell_size<=8
-vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *data){
+vp::IoReqStatus Pcm::handle_PCM_write(vp::IoReq *req){
+    uint64_t addr = req->get_addr();
+    uint64_t size = req->get_size();
     if(addr>this->pcm_size){
         this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: write out of bounds\n");
         return vp::IO_REQ_INVALID;
@@ -214,9 +214,9 @@ vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *dat
 
     for(size_t i=0;i<buff_size;i++){
         //this->trace.msg(vp::Trace::LEVEL_DEBUG,"PCM: writing cell %d, value: 0x%x\n",i,data[i]);
-        buff[i]=data[i];
+        buff[i]=req->data[i];
     }
-    this->trace.msg(vp::Trace::LEVEL_DEBUG,"PCM: write values 0x%x \n",*(uint32_t*)buff);
+    //this->trace.msg(vp::Trace::LEVEL_DEBUG,"PCM: write values 0x%x \n",*(uint32_t*)buff);
     memcpy((void *)(this->pcm_cells+addr), (void *)buff, buff_size*sizeof(pcm_size_t));
     free(buff);
     return vp::IO_REQ_OK;
@@ -264,14 +264,12 @@ vp::IoReqStatus Pcm::req_AIMC(vp::Block *__this, vp::IoReq *req){
         default:
             _this->trace.msg(vp::Trace::LEVEL_ERROR,"AIMC: Unknown command settings 0x%x\n",cmd);
     }
-    //if not recognized
     return vp::IoReqStatus::IO_REQ_INVALID;
 }
 
 vp::IoReqStatus Pcm::handle_Xi_write(vp::IoReq *req){
     uint64_t addr = req->get_addr()-0x4;//req cmd offset (32 bits or sizeof(uint32_t))
     uint64_t size = req->get_size();//assuming size in bytes
-    uint8_t *data = req->get_data();
 
     if(size>this->input_width_log2){
         size = this->input_width_log2;
@@ -284,7 +282,7 @@ vp::IoReqStatus Pcm::handle_Xi_write(vp::IoReq *req){
 
     this->trace.msg("AIMC: Writing Xi values at address 0x%x, size %d\n", addr, size);
     //this->trace.msg("AIMC: Writing Xi values: %x\n", *(uint32_t *)data);
-    memcpy(&this->input_vector[addr], data, size);
+    memcpy(&this->input_vector[addr], req->data, size);
 
     return vp::IO_REQ_OK;
 }
@@ -293,16 +291,14 @@ vp::IoReqStatus Pcm::handle_Yi_read(vp::IoReq *req){
 
     uint64_t addr = req->get_addr()-0x4; //req cmd offset (32 bits or sizeof(uint32_t))
     uint64_t size = req->get_size();//assuming size in bytes
-    uint8_t *data = req->get_data();
 
     if(size>this->output_width_log2){
         size = this->output_width_log2;
         this->trace.msg(vp::Trace::LEVEL_WARNING,"AIMC: Xi write size too big, max size is %d bytes, data croped\n",this->input_width_log2);
     }
 
-
-    memcpy(&this->aimc_response[addr],data,size);
-    this->trace.msg("AIMC: Reading Yi values at address 0x%x, size %d, value 0x%x\n", addr, size, *(uint32_t *)data);
+    memcpy(req->data,&this->aimc_response[addr],size);
+    this->trace.msg("AIMC: Reading Yi values at address 0x%x, size %d, value 0x%x\n", addr, size, *(uint32_t *)&this->aimc_response[addr]);
 
 
     return vp::IO_REQ_OK;
@@ -353,18 +349,20 @@ vp::IoReqStatus Pcm::aimc_settings(uint32_t cmd){
 
 vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
     
+
+
     if(!this->event.is_enqueued()){
         this->trace.msg("AIMC: computation enqued\n");
         this->pending_req = req;
-        
         this->mvm_multithreaded(this->pcm_cells, this->input_vector, this->sectors, this->mvm_full_result);
         this->convert_to_adc(this->mvm_full_result, this->aimc_response);
+        
         this->event.enqueue(this->aimc_latency);
 
         return vp::IO_REQ_PENDING;
 
     }
-    return vp::IO_REQ_INVALID;
+    return vp::IO_REQ_OK;
 }
 
 void Pcm::aimc_computation(vp::Block* __this, vp::ClockEvent *event){
@@ -397,7 +395,7 @@ void Pcm::compute_flat_mvm_tile(aimc_compute_helper_t * helper,pcm_size_t *matri
             while(sector[y]>=0){
                 for(int x=0;x<helper->cells_per_weight;x++){
                     //generate the index of the flat 5D array
-                    uint64_t idx = index(helper,sector[y],i,j,k,x);
+                    uint64_t idx = index(helper,sector[y],tile,j,k,x);
                     //the mask is used to select the bits of the cell, then it's shifted to the right position
                     weight |= ((matrix[idx]&helper->mask)<<bit_index);
                     //the bit index is decremented by the size of the cell
@@ -423,9 +421,10 @@ void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **
     //threads vector
     std::vector<std::thread> threads;
     //loops, each thread will compute a part of the matrix tile 
+    uint32_t threads_per_tile =4; //E.G. 16 thread total 
     for(int i=0;i<this->array_size;i++){
-        for(int j=0;j<2;j++){
-            std::thread t(compute_flat_mvm_tile,this->aimc_compute_helper, matrix, vector, result, sector[i], i,j*64, 64);
+        for(int j=0;j<threads_per_tile;j++){
+            std::thread t(compute_flat_mvm_tile,this->aimc_compute_helper, matrix, vector, result, sector[i], i,j*(tile_size/threads_per_tile), tile_size/threads_per_tile);
             threads.push_back(move(t));
         }
     }
@@ -433,19 +432,15 @@ void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **
     for(int i=0;i<threads.size();i++){
         threads[i].join();
     }
+    this->trace.msg("AIMC: MVM computation completed\n");
+    
 }
 
 void Pcm::convert_to_adc(int64_t *input, uint8_t *output){
-    for(int i=0;i<this->matrix_length;i++){
-        this->trace.msg(vp::Trace::LEVEL_DEBUG,"AIMC: converting input[%d]: %ld\n", i, input[i]);
-    }
+    
     this->trace.msg("AIMC: converting input vector to output vector\n");
-    //convert the input vector to the output vector
     for(int i=0;i<this->matrix_length;i++){
         this->adc(input[i],&output[i*this->response_byte_size]);
-    }
-    for(int i=0;i<this->matrix_length;i++){
-        this->trace.msg(vp::Trace::LEVEL_DEBUG,"AIMC: converted output[%d]: %ld\n", i, output[i]);
     }
 }
 
@@ -454,15 +449,13 @@ void Pcm::adc(int64_t input,uint8_t * output) {
     uint64_t max_mask = (~0ULL << this->output_size+1)>>1;
     uint64_t min_mask = (~0ULL << this->output_size);
     //clipping
-    
-    if(input & max_mask !=0) {
+    //FIXEME: while it works it's confusing, I should check for the sign bit and then clip the value
+    if((input & max_mask )!=0) {
         input = ~(~1ULL << this->output_size+1);
-        this->trace.msg(vp::Trace::LEVEL_DEBUG,"AIMC: adc input clipped to max value: %ld\n",input);
-    }else if(input & min_mask !=0) {
+    }else if((input & min_mask )!=0) {
         input = ~(~1ULL << this->output_size);
     }
     
-    //output buffer initialization, loads the less significant byte first at the end of the array
     output[0]=input;
     //most important byte masking to match the output size
     uint8_t mask=0xFF;
@@ -470,7 +463,6 @@ void Pcm::adc(int64_t input,uint8_t * output) {
     mask>>=(8-(this->output_size)+u_conversion)%8;
     //masking most significant byte
     output[0] &= mask;
-    this->trace.msg(vp::Trace::LEVEL_DEBUG,"AIMC: adc input: %ld, output: 0x%x\n",input,*(uint32_t *)output);
 }
 
 void Pcm::enabled_sectors(uint32_t configuration){

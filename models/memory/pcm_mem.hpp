@@ -132,8 +132,9 @@ class Pcm : public vp::Component
         /**
          * @brief PCM request handler
          * This method dispatches the request to the right method based on the address of the request.
+         * the first 4 bytes are the AIMC cmd, the following bytes are for the AIMC Xi vector, the last bytes are for the PCM cells.
+         * @note The PCM cells are not necessary for the module if the values are loaded from binary files and used as fixed memory.
          */
-
         static vp::IoReqStatus req_PCM_module(vp::Block *__this, vp::IoReq *req);   
 
         /**
@@ -156,10 +157,10 @@ class Pcm : public vp::Component
         static void power_ctrl_sync(vp::Block *__this,bool value);
 
         //          Read and write operations to/from PCM
-        vp::IoReqStatus handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *data);
+        vp::IoReqStatus handle_PCM_write(vp::IoReq *req);
         //load multiple cells as a single weight
         void pcm_load(uint64_t index,pcm_size_t * matrix,uint8_t * byteStream);
-        vp::IoReqStatus handle_PCM_read(uint64_t addr, uint64_t size, uint8_t *data);
+        vp::IoReqStatus handle_PCM_read(vp::IoReq *req);
         
         size_t pcm_output_size;
 
@@ -316,6 +317,7 @@ class Pcm : public vp::Component
          * @param vector pointer to the input vector
          * @param sector pointer to the sector array (describes whitch sector/s are active for each tile array)
          * @param result pointer to the output vector
+         * @note to change the number of threads there's a variable indie the code however it is not exposed to the user (if running on multi-core servers it's better to use more threads than the provided 16)
          */
         void mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **sector,int64_t * result);
 
@@ -336,6 +338,6 @@ class Pcm : public vp::Component
          * @note the output array is allocated in the heap and must be freed by the caller
          * @note the output array is not aligned to 8 bits, the first byte is the most significant
          */
-        void adc(int64_t input,uint8_t * output);
+        inline void adc(int64_t input,uint8_t * output);
 
 };
