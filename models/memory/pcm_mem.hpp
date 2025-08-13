@@ -7,6 +7,10 @@
 #include <string.h>
 #include <thread>
 #include <vector>
+#define PCM_SIZE_8 1
+
+#define INPUT_SIZE_8 1
+
 
 #ifdef PCM_SIZE_8
     typedef uint8_t pcm_size_t;

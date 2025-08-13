@@ -62,7 +62,7 @@ class Pcm(gvsoc.systree.Component):
                  name: str, 
                  Xi_size: int=8, 
                  cell_size: int=4,
-                 output_size: int=11,
+                 output_size: int=8,
                  cells_per_weight: int=2,
                  tile_size:int =128,
                  array_size:int=4,

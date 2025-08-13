@@ -58,6 +58,10 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
 
     this->pcm_size = this->cells_per_weight*this->tile_size*this->array_size*this->n_sectors*this->matrix_length;
     this->mvm_full_result = new int64_t[this->matrix_length];
+    if(this->mvm_full_result==nullptr){
+        this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: MVM result allocation failed\n");
+        throw std::bad_alloc();
+    }
 
     this->pcm_output_size = (cell_size*this->cells_per_weight)%8>0?1:0;
     this->pcm_output_size += (cell_size*this->cells_per_weight-((cell_size*this->cells_per_weight)%8))/8;
@@ -65,6 +69,7 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     //number of bytes for each Yi value in the output vector (tells how many bytes are needed to store the output value using all it's aviable bits)
     this->response_byte_size = this->output_size%(sizeof(uint8_t))+1;
     this->response_byte_size+=((this->output_size - this->response_byte_size)/(sizeof(uint8_t)*8));
+    this->trace.msg("PCM: response byte size: %d\n",this->response_byte_size);
 
     //number of Xi adresses in bit is equal to the number of Xi values devided by the width of the input bus
     this->Xi_adresses = matrix_length/input_width_log2;
@@ -72,6 +77,10 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     this->pcm_cells_adresses = (matrix_length*matrix_length)/pcm_width_log2;
 
     this->aimc_response = new uint8_t[this->matrix_length * this->response_byte_size];
+    if(aimc_response==nullptr){
+        this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: AIMC response allocation failed\n");
+        throw std::bad_alloc();
+    }
 
     trace.msg("Builing PCM input vector (Size: 0x%x)\n",this->matrix_length);
     //input value array allocation
@@ -136,8 +145,8 @@ vp::IoReqStatus Pcm::req_PCM_module(vp::Block *__this, vp::IoReq *req){
 
     
     Pcm *_this = (Pcm *)__this;
-    _this->trace.msg("req size: 0x%x\n",req->get_size());
-    if(req->get_addr() < (_this->matrix_length +sizeof(uint32_t))){//32_t size of cmd reg
+    _this->trace.msg("req size: 0x%x\t req addr: 0x%x\n",req->get_size(),req->get_addr());
+    if(req->get_addr() < (_this->matrix_length +sizeof(uint32_t))){//32_t size of cmd reg + Xi vector
         return Pcm::req_AIMC(__this, req);
     }
     else{
@@ -179,23 +188,9 @@ vp::IoReqStatus Pcm::handle_PCM_read(uint64_t addr, uint64_t size, uint8_t *data
     //read the PCM value from the memory
     //uint64_t pcm_value = 1000;
     memcpy((void *)data, (void*)(this->pcm_cells+addr), output_buffer_size);
+    this->trace.msg(vp::Trace::LEVEL_DEBUG,"PCM: read value: 0x%x\n",*(uint32_t *)data);
     //delete[] pcm_data;
     return vp::IO_REQ_OK;
-}
-
-void Pcm::pcm_load(uint64_t index,pcm_size_t * matrix,uint8_t * byteStream){
-    uint64_t value = 0;
-
-    for(int i=0;i<this->cells_per_weight;i++){
-        //std::cout<<std::bitset<cell_size>(matrix[index*nCells+i])<<std::endl;
-        value |= (matrix[index*this->cells_per_weight+i]&this->mask) << ((this->cells_per_weight-i-1)*cell_size);
-    }
-    //std::cout<<std::bitset<64>(value)<<std::endl;
-
-    for(int i=0;i<this->pcm_output_size;i++){
-        byteStream[this->pcm_output_size-i-1] = value >> (i*8) & 0xFF;
-    }
-
 }
 
 //FIXEME: this is valid only for 1<=cell_size<=8
@@ -221,6 +216,7 @@ vp::IoReqStatus Pcm::handle_PCM_write(uint64_t addr, uint64_t size, uint8_t *dat
         //this->trace.msg(vp::Trace::LEVEL_DEBUG,"PCM: writing cell %d, value: 0x%x\n",i,data[i]);
         buff[i]=data[i];
     }
+    this->trace.msg(vp::Trace::LEVEL_DEBUG,"PCM: write values 0x%x \n",*(uint32_t*)buff);
     memcpy((void *)(this->pcm_cells+addr), (void *)buff, buff_size*sizeof(pcm_size_t));
     free(buff);
     return vp::IO_REQ_OK;
@@ -287,6 +283,7 @@ vp::IoReqStatus Pcm::handle_Xi_write(vp::IoReq *req){
     }
 
     this->trace.msg("AIMC: Writing Xi values at address 0x%x, size %d\n", addr, size);
+    //this->trace.msg("AIMC: Writing Xi values: %x\n", *(uint32_t *)data);
     memcpy(&this->input_vector[addr], data, size);
 
     return vp::IO_REQ_OK;
@@ -303,9 +300,10 @@ vp::IoReqStatus Pcm::handle_Yi_read(vp::IoReq *req){
         this->trace.msg(vp::Trace::LEVEL_WARNING,"AIMC: Xi write size too big, max size is %d bytes, data croped\n",this->input_width_log2);
     }
 
-    this->trace.msg("AIMC: Reading Yi values at address 0x%x, size %d\n", addr, size);
 
     memcpy(&this->aimc_response[addr],data,size);
+    this->trace.msg("AIMC: Reading Yi values at address 0x%x, size %d, value 0x%x\n", addr, size, *(uint32_t *)data);
+
 
     return vp::IO_REQ_OK;
 }
@@ -438,9 +436,16 @@ void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **
 }
 
 void Pcm::convert_to_adc(int64_t *input, uint8_t *output){
+    for(int i=0;i<this->matrix_length;i++){
+        this->trace.msg(vp::Trace::LEVEL_DEBUG,"AIMC: converting input[%d]: %ld\n", i, input[i]);
+    }
+    this->trace.msg("AIMC: converting input vector to output vector\n");
     //convert the input vector to the output vector
     for(int i=0;i<this->matrix_length;i++){
         this->adc(input[i],&output[i*this->response_byte_size]);
+    }
+    for(int i=0;i<this->matrix_length;i++){
+        this->trace.msg(vp::Trace::LEVEL_DEBUG,"AIMC: converted output[%d]: %ld\n", i, output[i]);
     }
 }
 
@@ -448,24 +453,24 @@ void Pcm::adc(int64_t input,uint8_t * output) {
 
     uint64_t max_mask = (~0ULL << this->output_size+1)>>1;
     uint64_t min_mask = (~0ULL << this->output_size);
-
     //clipping
+    
     if(input & max_mask !=0) {
         input = ~(~1ULL << this->output_size+1);
+        this->trace.msg(vp::Trace::LEVEL_DEBUG,"AIMC: adc input clipped to max value: %ld\n",input);
     }else if(input & min_mask !=0) {
         input = ~(~1ULL << this->output_size);
     }
     
     //output buffer initialization, loads the less significant byte first at the end of the array
-    for (int i = 0; i < this->response_byte_size; ++i) {
-        output[this->response_byte_size-i-1] = input >> (i * 8) & 0xFF;
-    }  
+    output[0]=input;
     //most important byte masking to match the output size
     uint8_t mask=0xFF;
     int u_conversion = this->signed_computation ? 0 : 1; 
     mask>>=(8-(this->output_size)+u_conversion)%8;
     //masking most significant byte
     output[0] &= mask;
+    this->trace.msg(vp::Trace::LEVEL_DEBUG,"AIMC: adc input: %ld, output: 0x%x\n",input,*(uint32_t *)output);
 }
 
 void Pcm::enabled_sectors(uint32_t configuration){
