@@ -7,8 +7,9 @@
 #include <string.h>
 #include <thread>
 #include <vector>
-#define PCM_SIZE_8 1
+#include <functional>
 
+#define PCM_SIZE_8 1
 #define INPUT_SIZE_8 1
 
 
@@ -150,6 +151,8 @@ class Pcm : public vp::Component
 
         void free_component();
 
+        using MvmWorker = std::function<void(aimc_compute_helper_t*, pcm_size_t*, input_size_t*, int64_t*, int8_t*, int, int, int)>;
+
     private:
 
         vp::ClockEvent event;
@@ -269,7 +272,8 @@ class Pcm : public vp::Component
 
         aimc_compute_helper_t * aimc_compute_helper;
 
-
+        //MVM function worker, can be set to different implementations (i.e. standard, differential)
+        MvmWorker mvm_worker;
 
         //TODO: figure out how to map the PCM cells in a smart way (map? flat out? O(1) space c. would be better but I'm not sure if possible)
         int Xi_adresses;// equal to max_matrix_y / input_width_log2
@@ -309,6 +313,21 @@ class Pcm : public vp::Component
          * @param inc increment value
          */
         static void compute_flat_mvm_tile(aimc_compute_helper_t * helper,pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc);
+
+        /**
+         * @brief MVM differetnial tile portion computation
+         * This method compute a portion of the MVM operation in differential mode, it is called by the main MVM method and run on a separete thread
+         * The weight is calculated as the bitwise difference between two PCM cells of the same weight 
+         * @param matrix pointer to the PCM cells
+         * @param vector pointer to the input vector
+         * @param result pointer to the output vector
+         * @param sector pointer to the sector array (describes whitch sector/s are active)
+         * @param tile tile number
+         * @param i index of the tile
+         * @param inc increment value
+         * @note this method is conceptually the same as compute_flat_mvm_tile, the only difference is how the weight is calculated
+         */
+        static void compute_flat_differential_tile(aimc_compute_helper_t * helper,pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc);
 
         /**
          * @brief MVM multithreaded method
