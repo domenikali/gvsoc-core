@@ -117,6 +117,9 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     this->trace.msg("Default AIMC operation: signed computation\n");
     this->signed_computation=true;
     this->mvm_worker = Pcm::compute_flat_mvm_tile;
+    this->precision_mask = (1<<(sizeof(input_size_t)*8))-1;
+    this->aimc_compute_helper->precision_mask = this->precision_mask;
+    this->trace.msg("AIMC: Input default precision set to %s bits\n",std::bitset<8>(precision_mask).to_string().c_str());
 
     // Preload the Memory
     js::Config *stim_file_conf = this->get_js_config()->get("stim_file");
@@ -312,55 +315,51 @@ vp::IoReqStatus Pcm::aimc_settings(uint32_t cmd){
     {
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_SECTORS:
         this->enabled_sectors(cmd);
-        return vp::IO_REQ_OK;
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_U:
         this->signed_computation=false;
         this->mvm_worker = Pcm::compute_flat_mvm_tile;
         this->trace.msg("AIMC: Unsigned two step computation\n");
-        /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_U_DOUBLE_WEIGHT:
         this->signed_computation=false;
         this->mvm_worker = Pcm::compute_flat_mvm_tile;
         this->trace.msg("AIMC: Two step unsigned double weight computation\n");
-        /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_T_STEP_S:
         this->signed_computation=true;
         this->mvm_worker = Pcm::compute_flat_mvm_tile;
         this->trace.msg("AIMC: Two step signed computation\n");
-        /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_S_DOUBLE_WEIGHT:
         this->signed_computation=true;
         this->mvm_worker = Pcm::compute_flat_mvm_tile;
         this->trace.msg("AIMC: Two step signed double weight computation\n");
-        /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_SINGLE_STEP:
         this->signed_computation=true;
         this->mvm_worker = Pcm::compute_flat_differential_tile;
         this->trace.msg("AIMC: Signed single step computation\n");
-        /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_FAST_SINGLE_STEP:
         this->signed_computation=true;
         this->mvm_worker = Pcm::compute_flat_differential_tile;
         this->trace.msg("AIMC: Signed fast single step computation\n");
-        /* code */
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_INPUT_PRECISION:
-        /* code */
+        this->precision_mask = (1<<((cmd&0x00000007)+(this->signed_computation?1:0)))-1;
+        this->aimc_compute_helper->precision_mask = this->precision_mask;
+        this->trace.msg("AIMC: Input precision set to %s bits\n",std::bitset<8>(this->precision_mask).to_string().c_str());
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_BL:
-        /* code */
         break;
 
+    default:
+        this->trace.msg(vp::Trace::LEVEL_ERROR,"AIMC: Unknown command settings 0x%x\n",cmd);
+        return vp::IO_REQ_INVALID;
     }
-    //if not recognized (to avoid warnings)    
-    this->trace.msg(vp::Trace::LEVEL_ERROR,"AIMC: Unknown command settings 0x%x\n",cmd);
-    return vp::IO_REQ_INVALID;
+    return vp::IO_REQ_OK;
+    
 }
 
 vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
@@ -423,7 +422,7 @@ void Pcm::compute_flat_mvm_tile(aimc_compute_helper_t * helper,pcm_size_t *matri
                 weight = static_cast<int64_t>(static_cast<uint64_t>(weight) | helper->negative_mask);
             }
             //write the result into the result vector
-            result[tile*helper->tile_size+j] += weight * vector[k];
+            result[tile*helper->tile_size+j] += weight * (vector[k]&helper->precision_mask);
         }
     }
 }

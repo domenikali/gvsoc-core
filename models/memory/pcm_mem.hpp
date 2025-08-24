@@ -7,6 +7,7 @@
 #include <string.h>
 #include <thread>
 #include <vector>
+#include <bitset>
 #include <functional>
 
 #define PCM_SIZE_8 1
@@ -76,6 +77,7 @@ struct aimc_compute_helper{
     uint64_t negative;
     int max_shift;
     uint8_t mask;
+    input_size_t precision_mask;
 };
 typedef struct aimc_compute_helper aimc_compute_helper_t;
 
@@ -269,6 +271,8 @@ class Pcm : public vp::Component
         uint8_t mask;
         //  - true if the computation required signed multiplication or not
         bool signed_computation;
+        //  - mask to apply to the input vector based on the input precision
+        input_size_t precision_mask;
 
         aimc_compute_helper_t * aimc_compute_helper;
 
