@@ -1,6 +1,6 @@
 # GVSoC Phase-Change Memory (PCM) Model with Analog In-Memory Computing (AIMC)
 
-*Last Updated: 2025-08-12*
+*Last Updated: 2025-08-29*
 *Author: [domenikali](https://github.com/domenikali)*
 
 ---
@@ -40,9 +40,62 @@ To achieve maximum simulation speed, the neural network weights are not stored i
 
 ## 5. Getting Started
 
-### Prerequisites
-*   A working installation of the [GVSoC](https://github.com/pulp-platform/gvsoc) virtual platform.
-*   Familiarity with the [PULP-SDK](https://github.com/pulp-platform/pulp-sdk) environment.
+### OS Requirements Installation 🖥️
+
+To install the required packages, run:
+
+```bash
+sudo apt-get install -y build-essential git doxygen python3-pip libsdl2-dev curl cmake gtkwave libsndfile1-dev rsync autoconf automake texinfo libtool pkg-config libsdl2-ttf-dev
+```
+
+### Toolchain and Shell Requirements 🔧
+
+GVSoC requires the following tools and versions:
+
+- **g++** and **gcc** versions >= 11.2.0
+- **cmake** version >= 3.18.1
+- **Python** version >= 3.11.3
+
+### To run the tests from scratch
+
+1. **Clone the repository** and navigate into the project directory:
+
+   ```bash
+   git clone https://github.com/domenikali/gvsoc.git -b feature/SHR_PCM_module SHR_PCM_module
+   cd SHR_PCM_module
+   ```
+
+2. **Initialize the simulator environment** by running:
+
+   ```bash
+   source sourceme.sh
+   ```
+
+3. **Make sure the branches are correct**
+    ```bash
+    $ git branch 
+    > feature/SHR_PCM_module
+    $ cd core
+    /core $ git branch
+          > SHR_PCM_module
+    ```
+4. **Compiler** 
+
+    Make sure to have the `gcc-riscv64-unknown-elf` cross-compiler:
+    ```bash
+    sudo apt-get install gcc-riscv64-unknown-elf
+    ```
+5. **Run** the tests
+
+    Some simple tests are written within the `/docs/developer/tutorials/1_how_to_write_a_component_from_scratch`
+
+    To run them simply move to the tests direcctory then:
+    ```bash
+    make gvsoc
+    make all run runner_args="--trace=pcm"
+    ```
+
+    The tests are written in the `main.c` file.
 
 ### Integration
 To use this model, it must be integrated into a GVSoC simulation script (e.g., `mysystem.py` in the developer tutorials).
@@ -68,4 +121,4 @@ This model is an active project. Current and future efforts are focused on:
 *   **Driver Development**: An ongoing effort to create robust drivers within the PULP-SDK to provide a clean software API for the PCM's AIMC capabilities.
 *   **Comprehensive Testing**: Developing a full suite of unit and integration tests to validate the model's functionality and performance against theoretical results.
 
-The testing and driver work can be tracked in the `tutorial` section and on the associated **PULP-SDK repository**.
+The testing and driver work can be tracked in the `tutorial` section within GVSoC and on the associated **PULP-SDK repository**.
