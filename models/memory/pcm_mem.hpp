@@ -9,6 +9,7 @@
 #include <vector>
 #include <bitset>
 #include <functional>
+#include <atomic>
 
 #define PCM_SIZE_8 1
 #define INPUT_SIZE_8 1
@@ -25,13 +26,13 @@
 #endif
 
 #ifdef INPUT_SIZE_8
-    typedef uint8_t input_size_t;
+    typedef int8_t input_size_t;
 #elif defined(INPUT_SIZE_16)
-    typedef uint16_t input_size_t;
+    typedef int16_t input_size_t;
 #elif defined(INPUT_SIZE_32)
-    typedef uint32_t input_size_t;
+    typedef int32_t input_size_t;
 #else 
-    typedef uint64_t input_size_t;
+    typedef int64_t input_size_t;
 #endif
 
 enum class CMD : uint32_t{
@@ -45,7 +46,7 @@ enum class CMD_SETTINGS : uint32_t{
     CMD_SETTINGS_SECTORS = 0x10000000,
     CMD_SETTINGS_TWO_STEP_U = 0x11000000,
     CMD_SETTINGS_TWO_STEP_U_DOUBLE_WEIGHT = 0x12000000,
-    CMD_SETTINGS_T_STEP_S = 0x13000000,
+    CMD_SETTINGS_TWO_STEP_S = 0x13000000,
     CMD_SETTINGS_TWO_STEP_S_DOUBLE_WEIGHT = 0x14000000,
     CMD_SETTINGS_SINGLE_STEP = 0x15000000,
     CMD_SETTINGS_FAST_SINGLE_STEP = 0x16000000,
@@ -60,63 +61,6 @@ struct pcm_write_count{
 };
 typedef struct pcm_write_count pcm_write_count_t;
 
-/**
- * @brief AIMC compute helper structure
- * This structure contains all the parameters needed to perform AIMC computations.
- * It is used to pass parameters to the AIMC threads.
- * @author Leonardo Domenicali, UniBo (leonardo.domenicali@gmail.com | leonardo.domenicali@studio.unibo.it)
- */
-struct aimc_compute_helper{
-    int cells_per_weight;
-    int tile_size;
-    int array_size;
-    int n_sectors;
-    int matrix_length;
-    int cell_size;
-    uint64_t negative_mask;
-    uint64_t negative;
-    int max_shift;
-    uint8_t mask;
-    input_size_t precision_mask;
-};
-typedef struct aimc_compute_helper aimc_compute_helper_t;
-
-/**
- * @brief AIMC helper initialization
- * This function initializes the AIMC compute helper structure with the given parameters.
- * @param helper Pointer to the AIMC compute helper structure to initialize.
- * @param matrix_length Length of the matrix.
- * @param tile_size Size of the tile.
- * @param array_size Size of the array.
- * @param n_sectors Number of sectors.
- * @param cells_per_weight Number of cells per weight.
- * @param mask Mask to apply to the weights.
- * @author Leonardo Domenicali, UniBo (leonardo.domenicali@gmail.com | leonardo.domenicali@studio.unibo.it)
- */
-inline void aimc_helper_inti(aimc_compute_helper_t *helper, int matrix_length, int tile_size, int array_size, int n_sectors, int cells_per_weight,int cell_size,uint8_t mask){
-    helper->cells_per_weight = cells_per_weight;
-    helper->tile_size = tile_size;
-    helper->array_size = array_size;
-    helper->n_sectors = n_sectors;
-    helper->matrix_length = matrix_length;
-    helper->mask =mask;
-    helper->cell_size = cell_size;
-}
-
-/**
- * @brief AIMC helper parameter setting
- * This function sets the parameters of the AIMC compute helper structure.
- * @param helper Pointer to the AIMC compute helper structure to set.
- * @param negative_mask Mask to apply to the negative weights.
- * @param negative Value to use for negative weights.
- * @param max_shift Maximum shift value for the weights.
- * @author Leonardo Domenicali, UniBo (leonardo.domenicali@gmail.com | leonardo.domenicali@studio.unibo.it)
- */
-inline void aimc_helper_param(aimc_compute_helper_t *helper,uint64_t negative_mask, uint64_t negative, int max_shift){
-    helper->negative_mask = negative_mask;
-    helper->negative = negative;
-    helper->max_shift = max_shift;
-}
 
 /**
  * @brief PCM module with AIMC capabilities
@@ -153,8 +97,6 @@ class Pcm : public vp::Component
 
         void free_component();
 
-        using MvmWorker = std::function<void(aimc_compute_helper_t*, pcm_size_t*, input_size_t*, int64_t*, int8_t*, int, int, int)>;
-
     private:
 
         vp::ClockEvent event;
@@ -163,8 +105,7 @@ class Pcm : public vp::Component
 
         //          Read and write operations to/from PCM
         vp::IoReqStatus handle_PCM_write(vp::IoReq *req);
-        //load multiple cells as a single weight
-        void pcm_load(uint64_t index,pcm_size_t * matrix,uint8_t * byteStream);
+        
         vp::IoReqStatus handle_PCM_read(vp::IoReq *req);
         
         size_t pcm_output_size;
@@ -220,6 +161,7 @@ class Pcm : public vp::Component
 
         int tile_size;
         int array_size;
+        int n_layers;
         int n_sectors;
         int matrix_length;
 
@@ -233,15 +175,19 @@ class Pcm : public vp::Component
         int pcm_read_latency;
         int pcm_write_latency;
 
+        int mvm_threads;
+
         //total size in bytes of the PCM module
         size_t pcm_size;
 
     
         // AIMC configuration register (i.e. command, tiles and sectors, ...)
-        uint32_t *configuration_registers;
+        uint32_t configuration_registers;
         
         // matrix identifying used sectors during computation
-        int8_t ** sectors;
+        int8_t* sectors;
+        // layer for each sectors to use
+        int8_t** layers;
         //weigth matrix, it's allocatated as a flat array but it's accesed as a 5D matrix
         pcm_size_t * pcm_cells; 
 
@@ -274,11 +220,6 @@ class Pcm : public vp::Component
         //  - mask to apply to the input vector based on the input precision
         input_size_t precision_mask;
 
-        aimc_compute_helper_t * aimc_compute_helper;
-
-        //MVM function worker, can be set to different implementations (i.e. standard, differential)
-        MvmWorker mvm_worker;
-
         //TODO: figure out how to map the PCM cells in a smart way (map? flat out? O(1) space c. would be better but I'm not sure if possible)
         int Xi_adresses;// equal to max_matrix_y / input_width_log2
         int pcm_cells_adresses;// equal to max_matrix_y / pcm_width_log2   
@@ -286,63 +227,94 @@ class Pcm : public vp::Component
         //MVM and ADC logic
 
         /**
-         * @brief 2D array with enabled sectors
-         * This method set a 2D array with the enabled sectors for each column
-         * @param configuration_registers configuration cmd, 32 bits unsigned integer
+         * @brief Select enabled sectors
+         * This method set an array with the enabled sectors 
+         * @param configuratio configuration cmd, 32 bits unsigned integer
          */
         void enabled_sectors(uint32_t configuration);
 
         /**
-         * @breif flat 5D array index computation
-         * This method computes the index of the flat 5D array using the given parameters
-         * @param sect sector number
-         * @param i tile number
-         * @param j row number
-         * @param k column number
-         * @param x cell number
-         * @return index of the flat 5D array
-         */
-        static inline uint64_t index(aimc_compute_helper_t * helper,int sect,int i, int j, int k, int x);
-        
-        /**
-         * @brief MVM tile portion computation
-         * This method compute a portion of the MVM operation, it is called by the main MVM method and run on a separete thread
-         * The weight is calculated using bitwise operations to load only the useful bits of the PCM cells
-         * @param matrix pointer to the PCM cells
-         * @param vector pointer to the input vector
-         * @param result pointer to the output vector
-         * @param sector pointer to the sector array (describes whitch sector/s are active)
-         * @param tile tile number
-         * @param i index of the tile
-         * @param inc increment value
-         */
-        static void compute_flat_mvm_tile(aimc_compute_helper_t * helper,pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc);
+         * @brief Select enabled layers
+         * This method set a 2D array with the enabled layers for each sector
+         * @param configuration configuration cmd, 32 bits unsigned integer
+         * @param two_setp true if the two step mode is enabled, false otherwise
+         * @return true if the configuration is correct, false otherwise
+         * @note in single step mode only the configuration register is used to set the layer and the first one aviable is used for all the sectors
+        */
+        bool enabled_layers(uint32_t configuration,bool two_setp);
 
         /**
-         * @brief MVM differetnial tile portion computation
-         * This method compute a portion of the MVM operation in differential mode, it is called by the main MVM method and run on a separete thread
-         * The weight is calculated as the bitwise difference between two PCM cells of the same weight 
+         * @brief set input precision
+         * This method set the input precision mask based on the configuration cmd
+         * @param cmd configuration cmd, 32 bits unsigned integer
+         */
+        void set_precision(uint32_t cmd);
+
+        /**
+         * @breif flat 4D array index computation
+         * This method computes the index of the flat 4D array using the given parameters
+         * @param s sector number
+         * @param l layer number
+         * @param y row number
+         * @param x column number
+         * @return index of the flat 4D array
+         */
+        inline long long inedx(int s,int l,int y,int x){
+            return (((s*n_layers+l)*tile_size+y)*matrix_length)+x;
+        }
+
+        /**
+         * @brief MVM single threaded method
+         * This method compute the MVM operation using a single thread, it is the best suited for speed when the compiler optimizations are enabled
          * @param matrix pointer to the PCM cells
          * @param vector pointer to the input vector
+         * @param layers pointer to the layer array (describes whitch layer/s are active for each sector)
+         * @param sectors pointer to the sector array (describes whitch sector/s are active for each tile array)
          * @param result pointer to the output vector
-         * @param sector pointer to the sector array (describes whitch sector/s are active)
-         * @param tile tile number
-         * @param i index of the tile
-         * @param inc increment value
-         * @note this method is conceptually the same as compute_flat_mvm_tile, the only difference is how the weight is calculated
+         * 
          */
-        static void compute_flat_differential_tile(aimc_compute_helper_t * helper,pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc);
+        void optimised_singlethreaded(pcm_size_t* matrix, input_size_t* vector,  int8_t**  layers, int8_t* sectors, int64_t* result);
+
 
         /**
          * @brief MVM multithreaded method
          * This method compute the MVM operation using multiple threads, each thread compute a portion of the MVM operation
          * @param matrix pointer to the PCM cells
          * @param vector pointer to the input vector
-         * @param sector pointer to the sector array (describes whitch sector/s are active for each tile array)
+         * @param layers pointer to the layer array (describes whitch layer/s are active for each sector)
+         * @param sectors pointer to the sector array (describes whitch sector/s are active for each tile array)
          * @param result pointer to the output vector
-         * @note to change the number of threads there's a variable indie the code however it is not exposed to the user (if running on multi-core servers it's better to use more threads than the provided 16)
+         * @note number of threads can be changed by the user through the pcm_n_threads property within the python generator
+         * @note unfortunately this MVM require atomic operations in order to avoid race conditions
          */
-        void mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **sector,int64_t * result);
+        void optimised_multithreaded(pcm_size_t* matrix, input_size_t* vector,  int8_t** layers, int8_t* sectors, int64_t* result);
+
+        /**
+         * @brief MVM worker thread method
+         * This method compute a portion of the MVM operation, it is called by the main MVM method and run on a separete thread
+         * @param matrix pointer to the PCM cells
+         * @param sector sector number
+         * @param vector pointer to the input vector
+         * @param result pointer to the output vector
+         * @param y_start start index of the output vector
+         * @param end end index of the output vector
+         * @param matrix_length length of the matrix
+         */
+        static void multithreaded_worker_thread( pcm_size_t* matrix, int8_t sector,input_size_t* vector, std::atomic<int64_t>* result,int y_start,int end,int matrix_length);
+
+
+
+        /**
+         * @brief MVM method
+         * This method compute the MVM using the best suited algorithm based on the configuration, requested multithreading and compiler optimisation
+         * @param matrix pointer to the PCM cells
+         * @param vector pointer to the input vector
+         * @param layers pointer to the layer array (describes whitch layer/s are active for each sector)
+         * @param sectors pointer to the sector array (describes whitch sector/s are active for each tile array)
+         * @param result pointer to the output vector
+         * @note this method is a dispatcher to the best suited MVM implementation, use compiler flags to enable the specific algorithm wanted from higlevel
+         */
+        void mvm(pcm_size_t*matrix,input_size_t*vector, int8_t** layers, int8_t*sectors,int64_t*result);
 
         /**
          * @brief Convert the MVM full sized result to bite array
@@ -350,17 +322,8 @@ class Pcm : public vp::Component
          * @param mvm_full_result pointer to the MVM result
          * @param aimc_response pointer to the AIMC response
          */
-        void convert_to_adc(int64_t * mvm_full_result, uint8_t * aimc_response);
+        void adc(int64_t * mvm_full_result, uint8_t * aimc_response);
 
-        /**
-         * @brief ADC method
-         * This method convert the input value into a byte array cutting bit's over the max voltage, it is used to convert the output value of the MVM operation into a byte array ready to be returned via IoReq
-         * @param input input value to be converted
-         * @param unsigned_conversion if true the conversion is unsigned, otherwise it is signed
-         * @return pointer to the byte array
-         * @note the output array is allocated in the heap and must be freed by the caller
-         * @note the output array is not aligned to 8 bits, the first byte is the most significant
-         */
-        inline void adc(int64_t input,uint8_t * output);
+        
 
 };

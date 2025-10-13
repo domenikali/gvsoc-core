@@ -29,6 +29,8 @@ class Pcm(gvsoc.systree.Component):
         the number of tiles for each sector
     n_sectors: int
         the number of sectors in the module
+    n_layers: int
+        the number of layers in the module. Each layer is a group of sectors which can be activated at the same time.
 
     pcm_width_log2: int 
         The log2 of the bandwidth to the PCMs, i.e. the number of bytes the PCM module can transfer per cycle. (for ease of use this value should be a multiple of cell_size)
@@ -56,6 +58,9 @@ class Pcm(gvsoc.systree.Component):
 
     latency: int
         Specify extra latency which will be added to any incoming request.
+
+    mvm_threads: int
+        The number of threads to use for for each sector/layer computations during MVM operations when multi-threading is enabled.
     """
     def __init__(self, 
                  parent: gvsoc.systree.Component, 
@@ -64,6 +69,7 @@ class Pcm(gvsoc.systree.Component):
                  cell_size: int=4,
                  output_size: int=8,
                  cells_per_weight: int=2,
+                 n_layers: int=8,
                  tile_size:int =128,
                  array_size:int=4,
                  n_sectors:int=4,
@@ -75,6 +81,7 @@ class Pcm(gvsoc.systree.Component):
                  aimc_latency: int=0,
                  pcm_read_latency: int=0,
                  pcm_write_latency: int=0,
+                 mvm_threads: int=2,
                  stim_file: str=None, 
                  power_trigger: bool=False,
                  latency=0):
@@ -92,6 +99,7 @@ class Pcm(gvsoc.systree.Component):
             'cells_per_weight' : cells_per_weight,
             'tile_size':tile_size,
             'array_size':array_size,
+            'n_layers':n_layers,
             'n_sectors':n_sectors,
             'pcm_width_log2': pcm_width_log2,
             'input_width_log2': input_width_log2,
@@ -104,6 +112,7 @@ class Pcm(gvsoc.systree.Component):
             'stim_file': stim_file,
             'power_trigger': power_trigger,
             'latency': latency,
+            'mvm_threads': mvm_threads
         })
 
     def i_INPUT(self) -> gvsoc.systree.SlaveItf:

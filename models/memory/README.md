@@ -24,9 +24,9 @@ The core objective is to accelerate Artificial Intelligence (AI) and Machine Lea
 
 The model is contained within this folder and follows standard GVSoC component design patterns:
 
-*   📄 `pcm_mem.hpp`: The C++ header file defining the `Pcm` class, its interfaces (I/O ports), and internal state variables. The majority of the documentations is provided in the header.
-*   ⚙️ `pcm_mem.cpp`: The C++ implementation file containing the core logic for the PCM model, including memory access handlers and the AIMC algorithm.
-*   🐍 `pcm_mem.py`: The Python bindings for the C++ model. This file makes the component available to the GVSoC configuration system and defines how it can be instantiated and configured in a virtual platform.
+*    `pcm_mem.hpp`: The C++ header file defining the `Pcm` class, its interfaces (I/O ports), and internal state variables. The majority of the documentations is provided in the header.
+*    `pcm_mem.cpp`: The C++ implementation file containing the core logic for the PCM model, including memory access handlers and the AIMC algorithm.
+*    `pcm_mem.py`: The Python bindings for the C++ model. This file makes the component available to the GVSoC configuration system and defines how it can be instantiated and configured in a virtual platform.
 
 ## 4. Technical Implementation Details
 
@@ -40,7 +40,7 @@ To achieve maximum simulation speed, the neural network weights are not stored i
 
 ## 5. Getting Started
 
-### OS Requirements Installation 🖥️
+### OS Requirements Installation 
 
 To install the required packages, run:
 
@@ -48,7 +48,7 @@ To install the required packages, run:
 sudo apt-get install -y build-essential git doxygen python3-pip libsdl2-dev curl cmake gtkwave libsndfile1-dev rsync autoconf automake texinfo libtool pkg-config libsdl2-ttf-dev
 ```
 
-### Toolchain and Shell Requirements 🔧
+### Toolchain and Shell Requirements 
 
 GVSoC requires the following tools and versions:
 
