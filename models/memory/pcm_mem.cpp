@@ -582,7 +582,7 @@ void Pcm::mvm(pcm_size_t*matrix,input_size_t*vector, int8_t** layers, int8_t*sec
 void Pcm::adc(int64_t *input, uint8_t *output){
     
     this->trace.msg("AIMC: converting input vector to output vector\n");
-    uint64_t positive_mask = (~0ULL << this->output_size);
+    uint64_t positive_mask = (~0ULL << this->output_size-(signed_computation?0:1));
     positive_mask>>=1;
     uint64_t negative_mask = (~0ULL << this->output_size-(signed_computation?0:1));
     uint64_t m = 1ULL<<63;    
@@ -605,10 +605,13 @@ void Pcm::adc(int64_t *input, uint8_t *output){
                 }    
             }
             else{
-                val=~val+1;
-                if(input[i]!=0&&(val&0xFF)==0){
-                    val=~(~1ULL <<output_size-2);
+                if((val&positive_mask)!=0){
+                    val=~val+1;
+                    if(input[i]!=0&&(val&0xFF)==0){
+                        val=~(~1ULL <<output_size-2);
+                    }
                 }
+            
             }
             
         }
