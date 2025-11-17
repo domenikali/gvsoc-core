@@ -123,6 +123,7 @@ Pcm::Pcm(vp::ComponentConf &config) : vp::Component(config) , event( this, Pcm::
     //by default the AIMC is signed
     this->trace.msg("Default AIMC operation: signed computation\n");
     this->signed_computation=true;
+    this->single_step=false;
     this->precision_mask = (1<<(sizeof(input_size_t)*8))-1;
     this->trace.msg("AIMC: Input default precision set to %s bits\n",std::bitset<8>(precision_mask).to_string().c_str());
 
@@ -312,31 +313,37 @@ vp::IoReqStatus Pcm::aimc_settings(uint32_t cmd){
         
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_U:
+        this->single_step=false;
         this->signed_computation=false;
         if(!this->enabled_layers(configuration_registers,false)) return vp::IO_REQ_INVALID;
         this->trace.msg("AIMC: Unsigned two step computation\n");
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_U_DOUBLE_WEIGHT:
+        this->single_step=false;
         this->signed_computation=false;
         if(!this->enabled_layers(cmd,true)) return vp::IO_REQ_INVALID;
         this->trace.msg("AIMC: Two step unsigned double weight computation\n");
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_S:
+    this->single_step=false;
         this->signed_computation=true;
         if(!this->enabled_layers(configuration_registers,false)) return vp::IO_REQ_INVALID;
         this->trace.msg("AIMC: Two step signed computation\n");
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_TWO_STEP_S_DOUBLE_WEIGHT:
+        this->single_step=false;
         this->signed_computation=true;
         if(!this->enabled_layers(cmd,true)) return vp::IO_REQ_INVALID;
         this->trace.msg("AIMC: Two step signed double weight computation\n");
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_SINGLE_STEP:
+        this->single_step=true;
         this->signed_computation=true;
         if(!this->enabled_layers(configuration_registers,false)) return vp::IO_REQ_INVALID;
         this->trace.msg("AIMC: Signed single step computation\n");
         break;
     case (uint32_t)CMD_SETTINGS::CMD_SETTINGS_FAST_SINGLE_STEP:
+        this->single_step=true;
         this->signed_computation=true;
         this->trace.msg("AIMC: Signed fast single step computation\n");
         break;
@@ -364,12 +371,35 @@ vp::IoReqStatus Pcm::handle_AIMC_compute(vp::IoReq *req){
     if(!this->event.is_enqueued()){
         
         this->trace.msg("AIMC: computation enqued\n");
-        this->pending_req = req;
-        this->mvm(this->pcm_cells, this->input_vector, this->layers,this->sectors, this->mvm_full_result);
+        if(this->single_step){
+            this->pending_req = req;
+            int64_t * temp_result = new int64_t[this->matrix_length];
+            if(temp_result==nullptr){
+                this->trace.msg(vp::Trace::LEVEL_ERROR,"PCM: temporary MVM result allocation failed\n");
+                return vp::IO_REQ_INVALID;
+            }
+            this->mvm(this->pcm_cells, this->input_vector, this->layers,this->sectors, this->mvm_full_result);
+            int8_t** bottom_layer = new int8_t*[this->n_sectors+1];
+            for(int i=0;i<this->n_sectors;i++){
+                bottom_layer[i]=new int8_t[2];
+                bottom_layer[i][0]=this->layers[i][1];
+                bottom_layer[i][1]=-1;
+                this->layers[i][1]=-1;
+            }
+            this->mvm(this->pcm_cells, this->input_vector, bottom_layer,this->sectors, temp_result);
+            for(int i=0;i<this->matrix_length;i++){
+                this->mvm_full_result[i]-=temp_result[i];
+                if(this->mvm_full_result[i]<0)this->mvm_full_result[i]-=1;
+            }
+            delete[] temp_result;
+        }
+        else{
+            this->pending_req = req;
+            this->mvm(this->pcm_cells, this->input_vector, this->layers,this->sectors, this->mvm_full_result);
+        }
         this->aimc_compute_count++;//increment aimc compute count for performance statistics
         this->trace.msg("AIMC: MVM computation done\n");
-        this->adc(this->mvm_full_result, this->aimc_response);
-        
+        this->adc(this->mvm_full_result, this->aimc_response);                
         this->event.enqueue(this->aimc_latency);
 
         
@@ -493,90 +523,6 @@ void Pcm::mvm(pcm_size_t*matrix,input_size_t*vector, int8_t** layers, int8_t*sec
         #endif
     #endif
 }
-
-// void Pcm::compute_flat_mvm_tile(aimc_compute_helper_t * helper,pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc){
-//     for(int j=i;j<i+inc;j++){
-//         for(int k=0;k<helper->matrix_length;k++){
-//             //create an all-zero int64_t
-//             int64_t weight=static_cast<int64_t>(0);
-//             uint8_t y=0;
-//             //create an indexing for the bit shift
-//             int bit_index=helper->max_shift;
-            
-//             while(sector[y]>=0){
-//                 for(int x=0;x<helper->cells_per_weight;x++){
-//                     //generate the index of the flat 5D array
-//                     uint64_t idx = index(helper,sector[y],tile,j,k,x);
-//                     //the mask is used to select the bits of the cell, then it's shifted to the right position
-//                     weight |= ((matrix[idx]&helper->mask)<<bit_index);
-//                     //the bit index is decremented by the size of the cell
-//                     bit_index-=helper->cell_size;   
-//                 }
-//                 y++;
-//             }
-//             //check if the weight is negative
-//             if((weight&helper->negative)!=0){
-//                 //if the weight is negative make the 2's complement of it
-//                 weight = static_cast<int64_t>(static_cast<uint64_t>(weight) | helper->negative_mask);
-//             }
-//             //write the result into the result vector
-//             result[tile*helper->tile_size+j] += weight * (vector[k]&helper->precision_mask);
-//         }
-//     }
-// }
-
-// void Pcm::compute_flat_differential_tile(aimc_compute_helper_t * helper,pcm_size_t *matrix, input_size_t * vector, int64_t * result, int8_t *sector, int tile, int i,int inc){
-//     for(int j=i;j<i+inc;++j){
-//         for(int k=0;k<helper->matrix_length;++k){
-//             //create an all-zero int64_t
-//             int64_t weight=static_cast<int64_t>(0);
-//             uint8_t y=0;
-//             //create an indexing for the bit shift
-            
-//             while(sector[y]>=0){
-
-//                 for(int x=1;x<helper->cells_per_weight;++x){
-//                     //generate the index of the flat 5D array
-//                     uint64_t idx = index(helper,sector[y],tile,j,k,x);
-//                     //the mask is used to select the bits of the cell
-//                     weight |= ((matrix[idx]&helper->mask));
-                    
-//                 }
-//                 weight = matrix[index(helper,sector[y],tile,j,k,0)] & ~weight;
-//                 y++;
-//             }
-//             //check if the weight is negative
-//             if((weight&helper->negative)!=0){
-//                 //if the weight is negative make the 1's complement of it
-//                 weight = ~weight;
-//             }
-//             //write the result into the result vector
-//             result[tile*helper->tile_size+j] += weight * vector[k];
-//         }
-//     }
-// }
-
-  
-// void Pcm::mvm_multithreaded(pcm_size_t* matrix, input_size_t * vector, int8_t **sector,int64_t * result){
-//     //result vector initialization
-//     memset(result,0,sizeof(int64_t)*this->matrix_length);
-//     //threads vector
-//     std::vector<std::thread> threads;
-//     //loops, each thread will compute a part of the matrix tile 
-//     uint32_t threads_per_tile =4; //E.G. 16 thread total 
-//     for(int i=0;i<this->array_size;i++){
-//         for(int j=0;j<threads_per_tile;j++){
-//             std::thread t(mvm_worker,this->aimc_compute_helper, matrix, vector, result, sector[i], i,j*(tile_size/threads_per_tile), tile_size/threads_per_tile);
-//             threads.push_back(move(t));
-//         }
-//     }
-//     //thread join, not necesary but highly raccomended for extensive mvm use (E.G: it's fine without it as long as the ammount of request is low)
-//     for(int i=0;i<threads.size();i++){
-//         threads[i].join();
-//     }
-//     this->trace.msg("AIMC: MVM computation completed\n");
-    
-// }
 
 //FIXME: It works only for output size <=8 bit
 void Pcm::adc(int64_t *input, uint8_t *output){

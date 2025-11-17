@@ -217,6 +217,8 @@ class Pcm : public vp::Component
         uint8_t mask;
         //  - true if the computation required signed multiplication or not
         bool signed_computation;
+        // - true if the computation is in single step mode or false for two step mode
+        bool single_step;
         //  - mask to apply to the input vector based on the input precision
         input_size_t precision_mask;
 
@@ -323,6 +325,16 @@ class Pcm : public vp::Component
          * @param aimc_response pointer to the AIMC response
          */
         void adc(int64_t * mvm_full_result, uint8_t * aimc_response);
+
+        
+        /**
+         * @brief Convert the MVM full sized result to bite array for single computation step
+         * This method convert the MVM full int 64 bits result to a unsigned byte array, it is used to convert the output value of the MVM operation into a byte array ready to be returned via IoReq
+         * @param mvm_full_result pointer to the MVM result
+         * @param aimc_response pointer to the AIMC response
+         * @note the result is an array of once's signed values
+         */
+        void adc_once_comp(int64_t * mvm_full_result, uint8_t * aimc_response);
 
         
 
