@@ -483,7 +483,7 @@ Plic::Plic(vp::ComponentConf &config)
     this->input_itf.set_req_meth(&Plic::req);
     new_slave_port("input", &this->input_itf);
     bool smode = true;
-    int nb_procs = 1;
+    int nb_procs = 2;
 
     this->ndev = this->get_js_config()->get("ndev")->get_int();
 

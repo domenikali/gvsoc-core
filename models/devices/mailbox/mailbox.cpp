@@ -4,7 +4,18 @@
 #include <cstdint>
 #include <vector>
 #include <utility>
+/** 
+ *@brief:   Mailbox device model for GVSOC.
+ *@details: This device allows multiple "mailboxes" to be defined, each of which can hold up to two 32-bit "letters".
+ *   The device provides an interface for reading/writing these letters, as well as control registers to enable/disable sending and receiving interupts when "subscribed" to it.
+ *   When a letter is sent or received, the device can trigger an interrupt to notify the component connected to it.
+ *@auth: Leonardo Domenicali leonardo.domenicali@studio.unibo.it | leonardo.domenicali@gmail.com
+*/
 
+/**
+ * @brief:  offsets for the internal rappresentation of the mailbox status and control registers.
+ * @details: The registers are rappresented as bits in a 8-bit u-integer, so that they can be easily manipulated with bitwise operations while keeping the footprint of the model small
+ */
 enum internalRegisterOffsets {
     SND_STAT =  0,
     SND_SET =   1,
@@ -16,6 +27,10 @@ enum internalRegisterOffsets {
     RCV_EN =    7
 };
 
+/**
+ * @brief  offsets for the memory-mapped registers of the device.
+ * @details These offsets are used to decode the incoming requests and to identify which register is being accessed.
+ */
 enum registerOffsets {
     INT_SND_STAT =  0x0,
     INT_SND_SET =   0x4,
@@ -29,6 +44,12 @@ enum registerOffsets {
     LETTER_1 =      0x8C
 };
 
+/**
+ * @brief  helper function to check the status of a register bit.
+ * @param  reg the register value to check.
+ * @param  offset the offset of the bit to check, as defined in internalRegister
+ * @return true if the bit at the given offset is set, false otherwise.
+ */
 bool check_register(uint8_t reg, internalRegisterOffsets offset) {
     return (reg & (1u << offset)) != 0;
 }
@@ -37,7 +58,7 @@ class Mailbox : public vp::Component
 {
 public:
     Mailbox(vp::ComponentConf &conf);
-    ~Mailbox(); // Added destructor to free mallocs
+    ~Mailbox(); 
 
 private:
     static vp::IoReqStatus req(vp::Block *__this, vp::IoReq *req);
@@ -67,7 +88,6 @@ Mailbox::Mailbox(vp::ComponentConf &conf)
 
     this->mailboxSize = this->get_js_config()->get("size")->get_int();
 
-    // Recommend using new[] instead of malloc in C++
     irq_snds = new vp::WireMaster<bool>[this->mailboxSize];
     irq_rcvs = new vp::WireMaster<bool>[this->mailboxSize];
 
@@ -89,12 +109,18 @@ void Mailbox::fsm_handler(vp::Block *__this, vp::ClockEvent *event)
     // Unused for now
 }
 
+/**
+ * @brief  Method called when a request is received on the input interface. It decodes the request and updates the internal state of the device accordingly, as well as triggering interrupts if needed.
+ * @param  __this Pointer to the block instance receiving the request, which is casted to a Mailbox instance to access its internal state.
+ * @param  req Pointer to the request object containing the details of the request, such as the address, data, and whether it is a read or write operation.
+ * @return The status of the request, which can be IO_REQ_OK if the request was successfully handled, or IO_REQ_INVALID if the request was invalid
+ */
 vp::IoReqStatus Mailbox::req(vp::Block *__this, vp::IoReq *req)
 {
     Mailbox *_this = (Mailbox *)__this;
     uint64_t offset = req->get_addr();
     bool is_write = req->get_is_write();
-    uint8_t *data = req->get_data(); // Pointer to payload (read or write)
+    uint8_t *data = req->get_data(); 
     
     _this->trace.msg("Received request: addr=0x%lx, is_write=%d\n", offset, is_write);
     
@@ -109,11 +135,9 @@ vp::IoReqStatus Mailbox::req(vp::Block *__this, vp::IoReq *req)
     switch(reg_mailbox_index) {
         case LETTER_0:
             if(is_write) {
-                // Assuming a 32-bit write
                 _this->letters[mailbox_index].first = *(uint32_t*)data;
                 _this->trace.msg("Written letter 0: 0x%x\n", _this->letters[mailbox_index].first);
             } else {
-                // FIX: Copy data INTO the provided buffer
                 *(uint32_t*)data = _this->letters[mailbox_index].first;
                 _this->trace.msg("Read letter 0: 0x%x\n", _this->letters[mailbox_index].first);
             }
@@ -124,7 +148,6 @@ vp::IoReqStatus Mailbox::req(vp::Block *__this, vp::IoReq *req)
                 _this->letters[mailbox_index].second = *(uint32_t*)data;
                 _this->trace.msg("Written letter 1: 0x%x\n", _this->letters[mailbox_index].second);
             } else {
-                // FIX: Copy data INTO the provided buffer
                 *(uint32_t*)data = _this->letters[mailbox_index].second;
                 _this->trace.msg("Read letter 1: 0x%x\n", _this->letters[mailbox_index].second);
             }
@@ -144,7 +167,6 @@ vp::IoReqStatus Mailbox::req(vp::Block *__this, vp::IoReq *req)
         case INT_SND_CLR:
             if(is_write) {
                 _this->trace.msg("Clear status of mailbox %d\n", mailbox_index);
-                // FIX: Bitwise AND assignment was missing the '='
                 _this->registers[mailbox_index] &= ~(1u << SND_CLR);
 
                 if(check_register(_this->registers[mailbox_index], RCV_EN)) {
@@ -175,7 +197,6 @@ vp::IoReqStatus Mailbox::req(vp::Block *__this, vp::IoReq *req)
         case INT_RCV_CLR:
             if(is_write) {
                 _this->trace.msg("Clear status rcv of mailbox %d\n", mailbox_index);
-                // FIX: Bitwise AND assignment was missing the '='
                 _this->registers[mailbox_index] &= ~(1u << RCV_CLR);
                 if(check_register(_this->registers[mailbox_index], SND_EN)) {
                     _this->irq_snds[mailbox_index].sync(false);
