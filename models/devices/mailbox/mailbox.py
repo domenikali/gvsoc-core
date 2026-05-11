@@ -1,42 +1,25 @@
-"""
+import gvsoc.systree
 
-"""
-
-import gvsoc.systree as st
-
-class Mailbox(st.Component):
-    """
-    Mailbox
-
-    This instantiates a mailbox component.
-
-    Attributes
-    ----------
-    size : int
-        Size of the mailbox (default: 0x1000).
-
+class Mailbox(gvsoc.systree.Component):
     """
 
-    def __init__(self, parent, name, size=None):
-        super(Mailbox, self).__init__(parent, name)
+    """
+    def __init__(self, parent: gvsoc.systree.Component, name: str, size: int):
 
-        if size is None:
-            size = 0x1000
+        super().__init__(parent, name)
 
-        # Register all parameters as properties so that they can be overwritten from the command-line
-        self.add_property('size', size)
+        self.add_sources(['devices.mailbox.mailbox'])
 
-        self.set_component('devices.mailbox')
+        self.add_properties({
+            "size": size
+        })
 
-    def i_INPUT(self) -> st.SlaveItf:
-        """Returns the input port.
+    def i_INPUT(self) -> gvsoc.systree.SlaveItf:
+        return gvsoc.systree.SlaveItf(self, 'input', signature='io')
 
-        Incoming requests to be handled by the memory should be sent to this port.\n
-        It instantiates a port of type vp::IoSlave.\n
-
-        Returns
-        ----------
-        gvsoc.systree.SlaveItf
-            The slave interface
-        """
-        return st.SlaveItf(self, 'input', signature='io')
+    # The IRQ wire output
+    def o_SND_IRQ(self,id:int, itf: gvsoc.systree.SlaveItf):
+        self.itf_bind(f'irq_snd_{id}', itf, signature='wire<bool>')
+    
+    def o_RCV_IRQ(self,id:int, itf: gvsoc.systree.SlaveItf):
+        self.itf_bind(f'irq_rcv_{id}', itf, signature='wire<bool>')
